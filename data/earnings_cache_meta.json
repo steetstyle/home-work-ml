@@ -1,0 +1,23 @@
+{
+ "tickers": [
+  "AMD",
+  "AMZN",
+  "BAC",
+  "CVX",
+  "GOOGL",
+  "GS",
+  "INTC",
+  "JNJ",
+  "JPM",
+  "META",
+  "MSFT",
+  "MU",
+  "NVDA",
+  "PFE",
+  "QCOM",
+  "TXN",
+  "UNH",
+  "XOM"
+ ],
+ "limit": 60
+}
