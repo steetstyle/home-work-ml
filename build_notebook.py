@@ -25,23 +25,56 @@ def code(s: str):
     }
 
 
+def section_story(bridge: str, purpose: str, why_now: str, when_use: str) -> str:
+    """Markdown block: Bu adımda ne yapıyoruz? (hikaye akışı)."""
+    return f"""
+            ### Bu adımda ne yapıyoruz?
+
+            {bridge.strip()}
+
+            - **Ne yapıyoruz:** {purpose.strip()}
+            - **Neden şimdi:** {why_now.strip()}
+            - **Ne zaman kullanılır:** {when_use.strip()}
+            """
+
+
+def section_reading(body: str) -> str:
+    """Markdown block: Bu çıktıyı nasıl okuruz? (+ optional #### Kavram alt bölümleri)."""
+    return f"""
+            ### Bu çıktıyı nasıl okuruz?
+
+            {body.strip()}
+            """
+
+
 def main():
     cells = []
 
     cells.append(
         md(
             """
-            # Earnings Sonrası Hisse Getiri Tahmini (Regression)
+            # Earnings sonrası hisse getiri tahmini
 
-            **Dosya adı:** `code_soyad.ipynb` — `STUDENT_SURNAME = "soyad"` değerini kendi soyadınızla değiştirin.
+            **Dosya:** `code_soyad.ipynb` — `STUDENT_SURNAME = "soyad"` değerini kendi soyadınızla değiştirin.
 
-            **Tanım (sızıntı önleme):** `event_date` = yfinance earnings tarihi. **Giriş günü** (`entry_date`) = bu tarihten *sonraki* ilk iş günü.
-            **Hedefler** (`y_*`): giriş günü kapanışından itibaren 1, 3, 5, 10, 15, 21, 63 iş günü ilerideki kapanışa kadar basit getiri.
-            **Ticker listesi:** [tickers.csv](tickers.csv) (`sector`, `ticker` sütunları). Dosya yoksa varsayılan evren kullanılır ve aynı dizinde `tickers.csv` oluşturulur; düzenledikten sonra `from odev_helpers import reload_sector_tickers; reload_sector_tickers()` ile yenileyin (kernel yeniden başlatmak da yeterli).
+            ## Hikaye
 
-            **Özellikler:** `feature_date` = girişten bir iş günü önce. Piyasa/sektör sinyalleri **ETF yok**: tüm evrenin ve (kendi hariç) sektör arkadaşlarının eşit ağırlıklı kapanış sepeti. EPS yfinance’dan; eksikler NaN kalabilir.
+            Soru şu: **Bilanço (earnings) açıklandıktan sonra hisse ne yapar?** Her satır bir *olay*: `event_date` (yfinance kazanç tarihi), **giriş günü** `entry_date` (ertesi ilk iş günü), **özellik günü** `feature_date` (girişten bir iş günü önce — sızıntıyı önlemek için). **Hedefler** `y_*`: giriş kapanışından 1, 3, 5, … 63 iş günü sonrasına kadar basit getiri.
 
-            **Bu not defterinde:** Aşağıdaki bölümlerde her önemli tablo ve grafik için kısa bir **Okuma rehberi** (ne işe yarar / nasıl okunur) vardır; **Kavramlar** bölümünde RMSE, CV, Ridge/Lasso, RFE, XGB/LGBM ve havuzlama modları özetlenir.
+            Önce veriyi kuruyoruz, ortak hareketi ve hedef dağılımlarını anlıyoruz, sonra **zaman serisi çapraz doğrulama (cross-validation, CV)** ile modelleri dürüstçe kıyaslıyoruz. Kavramlar tek listede değil; **ilk kullanıldıkları adımda** tanımlanır (Türkçe anlatım, teknik terimler parantezde İngilizce).
+
+            ## Yol haritası
+
+            1. **§1 Veri** — olay paneli, tarih sırası  
+            2. **§2 Korelasyon** — hisseler birlikte mi hareket ediyor?  
+            3. **§3 Özellikler / hedefler** — neyi tahmin ediyoruz, dağılım nasıl?  
+            4. **§3.5 Zaman serisi CV** — geçmişe eğit, gelecek fold’da ölç (tüm modeller için ortak kural)  
+            5. **§4 Regresyon** — özellik seçimi + Ridge / Lasso / ElasticNet  
+            6. **§4.5 Sınıflandırma** — LDA / QDA / Naive Bayes: beat ve getiri yönü  
+            7. **§5–§6** — XGB / LGBM ve havuzlama modları  
+            8. **§7–§9** — özet, tahmin tabloları, Excel / sunum  
+
+            **Pratik:** Fiyatlar `data/raw_prices_long.csv`, kazançlar `data/earnings_dates_cache.csv` önbelleğe alınır. Evren [tickers.csv](tickers.csv); yoksa varsayılan oluşturulur. Piyasa/sektör: ETF yok, eşit ağırlıklı sepet. EPS eksikleri NaN kalabilir.
             """
         )
     )
@@ -129,6 +162,16 @@ def main():
 
     cells.append(md("## 1. Veri çekme ve panel"))
     cells.append(
+        md(
+            section_story(
+                bridge="Başlangıç: tahmin yapmadan önce **olay tablosunun** (`events`) güvenilir olduğundan emin olmalıyız.",
+                purpose="yfinance’tan hizalanmış fiyat paneli ve ticker başına kazanç tarihleriyle **olay × özellik × hedef** satırları üretmek; boyut ve örnek satırları görmek.",
+                why_now="Model skoru anlamsız olur, eğer tarihler karışıksa veya örnek sayısı çok düşükse — CV’yi §3.5’te kuracağız.",
+                when_use="Her yeni veri kaynağı, ticker listesi veya önbellek yenilemesinden sonra bu adımı tekrarlayın.",
+            )
+        )
+    )
+    cells.append(
         code(
             """
             # Ham fiyatlar data/raw_prices_long.csv önbelleğe yazılır; varsa indirme atlanır.
@@ -174,9 +217,9 @@ def main():
             sonuc_1 = format_sonuc(
                 "1 Veri",
                 [
-                    f"Toplam {len(events)} olay, {events['ticker'].nunique()} ticker; tarih {tab_veri['tarih_min'].iloc[0]} – {tab_veri['tarih_max'].iloc[0]}.",
-                    "Zaman serisi CV için satırlar **entry_date** ile sıralanmalı (sağ grafik); ticker gruplu sıra CV fold’larını bozar.",
-                    "Olay sayısı çok düşükse fold başına test örneği azalır — sonraki CV std yüksek olabilir.",
+                    f"Panel hazır: {len(events)} olay, {events['ticker'].nunique()} ticker; tarih aralığı {tab_veri['tarih_min'].iloc[0]} – {tab_veri['tarih_max'].iloc[0]}.",
+                    "Hikaye devamı §2: hisseler ortak mı hareket ediyor — korelasyon (correlation) bakacağız.",
+                    "Unutmayın: CV için satırlar **entry_date** sırasında olmalı (sağ grafik); ticker’a göre sıra yanıltıcıdır.",
                 ],
             )
             display(Markdown(sonuc_1))
@@ -186,29 +229,30 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Neden: Veri
-            - **Neden böyle ilerledik:** Tüm hisseler tek indirmede hizalanır; ham panel `data/raw_prices_long.csv` olarak saklanır, dosya varsa ve tüm ticker’lar kapsanıyorsa tekrar indirilmez (`force_refresh_raw=True` veya dosyayı silerek yenilersiniz). **Kazanç tarihleri** ticker başına yfinance’tan yavaş gelir; `data/earnings_dates_cache.csv` + `earnings_cache_meta.json` ile aynı ticker listesi ve limit için ikinci çalıştırmadan itibaren tekrar çağrılmaz (`force_refresh_earnings=True` veya bu iki dosyayı silerek yenileyin).
-            - **Neden bunu seçtik:** Tekrarlanabilir, ücretsiz `yfinance` kaynağı; tekrar çalıştırmada hız ve kota tasarrufu.
-            - **Alternatif:** Finnhub / Polygon — API anahtarı gerekir, bu ödevde kullanılmadı.
-            - **Sonraki adım:** Eksik EPS için manuel CSV birleştirmek.
+            section_reading(
+                """
+            - **`events.shape` / `adj.shape`:** Satır = kazanç olayı sayısı; `adj` sütunları = indirilen hisse. Çok az satır → sonraki CV güvenilmez.
+            - **`events.head()`:** `feature_date` girişten önce olmalı; `y_*` uç değerler aykırı olay olabilir.
+            - **Aylık olay grafiği:** Zaman içinde veri yoğunluğu; seyrek aylar fold’ları küçültür.
+            - **Ticker sırası vs `entry_date` sırası:** Sağ panel geleceği “görmez”; sol panel CV’yi bozar — §3.5’te hep kronolojik sıra kullanacağız.
 
-            ### Okuma rehberi — §1 Çıktılar
-            **`events.shape` / `adj.shape`**
-            - **Ne işe yarar:** Veri boyutu; model için yeterli satır var mı, kaç ticker kapsandı hızlı kontrol.
-            - **Nasıl okunur:** `(satır, sütun)`; satır = olay sayısı, `adj` sütunları = indirilen hisse sayısı. Satır çok düşükse CV güvenilmez.
-
-            **`events.head()`**
-            - **Ne işe yarar:** Tarih, ticker, birkaç özellik ve hedef sütunlarının gerçekten hizalandığını görmek.
-            - **Nasıl okunur:** `entry_date` ≤ `feature_date` ilişkisine dikkat (özellikler girişten önceki güne ait). `y_*` çok uç değerler aykırı olay olabilir.
-
-            **İlk çalıştırma uzun sürerse**
-            - Ham fiyat ve kazanç önbelleği oluşana kadar ağ istekleri yapılır; sonraki çalıştırmalar `data/` altındaki CSV/JSON dosyalarından okur ve genelde çok daha kısadır. `tickers.csv` değiştiyse veya daha fazla kazanç geçmişi istiyorsanız (`earnings_limit`) ilgili önbellek dosyalarını silin veya `force_refresh_*` bayraklarını kullanın.
-            """
+            Önbellek: `force_refresh_raw=True` veya `force_refresh_earnings=True` ile yenileme; ikinci çalıştırma genelde hızlıdır.
+                """
+            )
         )
     )
 
     cells.append(md("## 2. Korelasyon analizi"))
+    cells.append(
+        md(
+            section_story(
+                bridge="§1’de paneli kurduk; şimdi hisseler **birlikte mi hareket ediyor** ona bakıyoruz.",
+                purpose="Farklı takvim pencerelerinde (1 ay – 2 yıl) getiri **korelasyon (correlation)** matrisleri, ısı haritası, küme haritası (clustermap).",
+                why_now="Yüksek korelasyon → özellikler birbirinin kopyası gibi; §4’te özellik seçimi (feature selection) ve sektör sinyalleri bunun için anlamlı.",
+                when_use="Evren genişlediğinde veya piyasa rejimi değiştiğinde korelasyon yapısını yeniden kontrol edin.",
+            )
+        )
+    )
     cells.append(
         code(
             """
@@ -303,9 +347,9 @@ def main():
                     format_sonuc(
                         "2 Korelasyon",
                         [
-                            f"Kısa vs uzun pencere: daha yüksek ortalama |ρ| → **{_win_best}** (yoğun ortak hareket).",
-                            "Isı haritası ve küme yapısı, sektör/piyasa özelliklerinin modele anlamlı olabileceğini gösterir.",
-                            "Sonraki CV’de bu ortak yapı pooled modelde tek zaman ekseninde test edilecek.",
+                            f"Ortak hareket en yoğun pencere: **{_win_best}** — sektör/piyasa özellikleri §4–§6’da işe yarayabilir.",
+                            "§3’e geçiyoruz: hedef getirilerin dağılımı gürültülü mü, hangi horizon zor?",
+                            "Çoklu doğrusal bağlantı (multicollinearity) riski → §4’te `corr_prune` ve diğer FS yöntemleri.",
                         ],
                     )
                 )
@@ -316,33 +360,31 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Neden: Korelasyon
-            - **Neden:** Multi-stock model için ortak hareket var mı diye bakıldı; **son 1–24 ay** takvim pencerelerinde Pearson korelasyonu (daha kısa örneklerde rejim / gürültü farkı).
-            - **Seçim:** Her pencere için ısı haritası; 1 yıl / 2 yıl için clustermap; NVDA–INTC rolling örnek (pencere içi veri).
-            - **Alternatif:** DCC-GARCH — kapsam dışı.
+            section_reading(
+                """
+            - **Pencere tablosu:** `n_gün` çok düşükse o pencerenin ısı haritasına temkinli yaklaşın.
+            - **Isı haritası:** Kırmızı/mavi bloklar = ortak faktör; §6’da sektör sepeti özelliği bunu açıkça modele verir.
+            - **Clustermap:** Benzer profilli hisseler aynı dalda — raporda “küme” diye özetlenebilir.
+            - **NVDA–INTC rolling:** İlişki zamanla değişir; mutlak seviye yerine göreli sıraya bakın.
 
-            ### Okuma rehberi — §2 Grafikler ve tablo
-            **Pencere özeti tablosu (`pencere`, `ay`, `n_gün`)**
-            - **Ne işe yarar:** Her korelasyon matrisinde kaç günlük getiri kullanıldığını gösterir; kısa pencerelerde korelasyonun daha gürültülü olabileceğini hatırlatır.
-            - **Nasıl okunur:** Aynı `ay` için `n_gün` beklediğiniz iş günü sayısıyla uyumlu mu bakın; çok düşükse o pencerenin ısı haritasını zayıf güvenle yorumlayın.
-
-            **Isı haritası (her pencere)**
-            - **Ne işe yarar:** Hangi hisselerin getirilerinin aynı yönde hareket ettiğini (Pearson ρ) gösterir; çoklu collinearity riski için.
-            - **Nasıl okunur:** Hücre rengi: koyu kırmızı = güçlü pozitif, mavi = negatif, beyaza yakın = zayıf ilişki. Köşegen her zaman 1 (kendiyle). Sektör kümesi blokları görüyorsanız “ortak faktör” vardır.
-
-            **Clustermap (1y, 2y)**
-            - **Ne işe yarar:** Benzer korelasyon profiline sahip ticker’ları ağaç yapısıyla gruplar.
-            - **Nasıl okunur:** Dendrogramda erken birleşen dallar birbirine yakın hareket eden hisseler; raporda “küme” diye özetlenebilir.
-
-            **NVDA–INTC çok çizgili rolling korelasyon**
-            - **Ne işe yarar:** Aynı çift için farklı tarih dilimlerinde ilişkinin zamanla nasıl değiştiğini kıyaslamak.
-            - **Nasıl okunur:** Çizgiler üst üste binmez; etiket hangi pencereye ait. Yüksek eğri = o dönemde güçlü pozitif korelasyon. Her pencerede `w` (rolling uzunluğu) farklı olduğu için mutlak seviyeyi pencereler arası kıyaslamada dikkatli olun; trend ve göreli sıralama daha güvenli.
-            """
+            #### Kavram: çoklu doğrusal bağlantı (multicollinearity)
+            Özellikler birbirine çok benziyorsa linear model katsayıları kararsızlaşır. **Ne zaman:** Korelasyon matrisinde |ρ| yüksek çiftler çoksa. **Ne yaparız:** §4’te `corr_prune`, Ridge cezası veya daha az özellik.
+                """
+            )
         )
     )
 
     cells.append(md("## 3. Özellikler ve hedef dağılımları"))
+    cells.append(
+        md(
+            section_story(
+                bridge="Ortak hareketi gördük; şimdi **neyi tahmin ettiğimizi** ve özellik kümesinin boyutunu netleştiriyoruz.",
+                purpose="Tüm `y_*` horizon’ları için histogram; özellik sayısı; kısa/uzun horizon yayılımı (std, çarpıklık).",
+                why_now="Gürültülü veya çarpık hedefler RMSE’yi şişirir; hangi model ailesinin deneneceğine ipucu verir.",
+                when_use="Yeni hedef tanımı veya horizon eklendiğinde bu adımı tekrarlayın.",
+            )
+        )
+    )
     cells.append(
         code(
             """
@@ -380,9 +422,9 @@ def main():
                         format_sonuc(
                             "3 Özellikler",
                             [
-                                f"Kısa horizon ort. std ≈ {std_short:.4f}; uzun horizon ort. std ≈ {std_long:.4f} (yüksek → daha gürültülü hedef).",
-                                "Çarpık dağılımlarda RMSE aykırılara duyarlı; ağaç modelleri §5’te denenecek.",
-                                f"Özellik sayısı: {len(feats)} — FS ve düzenlileştirme §4’te CV ile seçilecek.",
+                                f"Kısa horizon std ≈ {std_short:.4f}, uzun ≈ {std_long:.4f} — uzun vade genelde daha geniş (gürültülü) hedef.",
+                                f"{len(feats)} özellik var; hedef başına en iyi kombinasyonu henüz bilmiyoruz.",
+                                "Sırada §3.5: skoru hesaplamadan önce zamanı doğru bölmeyi (CV) öğreneceğiz.",
                             ],
                         )
                     )
@@ -393,81 +435,36 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §3 Özellik sayısı ve hedef histogramları
-            **`Özellik sayısı`**
-            - **Ne işe yarar:** Modele giren sayısal sütun adedi; aşırı çok özellik → overfit / yavaş eğitim riski.
-            - **Nasıl okunur:** Sayı makul mü (ör. olay sayısının çok üstünde değil mi). Sonraki bölümlerde seçim (RFE, KBest, corr prune) bu set üzerinde.
-
-            **Her `y_*` için histogram**
-            - **Ne işe yarar:** Hedef değişkenin dağılımı (çarpıklık, aykırı, sıfıra yakın kümeleşme); RMSE yorumu ve model seçimi için.
-            - **Nasıl okunur:** Tek tepeli ve simetrike yakınsa linear modeller daha makul; uzun kuyruk veya uç değer çokluğu → hata metrikleri birkaç aykırı olaya duyarlı olur, robust/ensemble düşünülebilir. Uzun horizon (`y_*` büyük) genelde daha geniş yayılım gösterir.
-            """
-        )
-    )
-
-    cells.append(
-        md(
-            """
-            ## Kavramlar: RMSE, CV, düzenlileştirme, RFE, XGB / LGBM
-
-            ### RMSE (Root Mean Squared Error)
-            - **Ne:** Tahmin hatalarının karelerinin ortalamasının karekökü; **hedefle aynı birimde** (burada yaklaşık “getiri” birimi).
-            - **Nasıl okunur:** **Düşük RMSE = daha iyi**. Büyük aykırı hatalara duyarlıdır (hata karesi olduğu için tek bir çok kötü tahmin RMSE’yi şişirir).
-
-            ### CV (Cross-Validation) ve `cv_rmse_mean` / `cv_rmse_std`
-            - **Ne:** Veriyi **entry_date** sırasına göre bloklara ayırıp (`TimeSeriesBlockCV`, [makale](https://emad-ezzeldin4.medium.com/introduction-to-time-series-cross-validation-mastering-predictive-accuracy-in-sequential-data-139710a07915)) modeli “geçmişe eğit, sonraki dilime skorla” tekrarlamak.
-            - **gap / offset:** `gap` eğitim–test arasında boşluk; `offset` ilk test fold’undan önce minimum geçmiş uzunluğu.
-            - **`cv_rmse_mean`:** Fold’larda elde edilen RMSE’lerin ortalaması — **genel performans** özeti.
-            - **`cv_rmse_std`:** Fold’lar arası dalgalanma; **yüksek** ise model veya veri fold’a duyarlı, güven aralığı geniş demektir.
-            - **Neden gerekli:** Tek bir train/test bölmesi şansa bağlıdır; CV daha stabil kıyas verir.
-
-            ### Ridge
-            - **Ne:** Tüm katsayılara **L2 cezası** (katsayıların kareleri toplanır) ekleyen linear regresyon; katsayıları küçültür, çoklu doğrusal bağlantıda (collinearity) daha stabil olabilir.
-            - **Ne zaman iyi:** Çok sayıda zayıf ama bilgi taşıyan özellik; hedef kabaca doğrusal; aykırı gözlem sayısı çok aşırı değil.
-
-            ### Lasso
-            - **Ne:** **L1 cezası** — bazı katsayıları **tam sıfır** yaparak özellik seçimi gibi davranır (seyrek model).
-            - **Ne zaman iyi:** Gerçekten birkaç güçlü özellik yeterliyse veya gürültülü sütunları elemek istiyorsanız. Ridge’e göre daha “keskin” seçim; yanlış ayarlanırsa önemli özellikleri de sıfırlayabilir.
-
-            ### Ridge vs Lasso (sezgisel)
-            - **Ridge** çoğu özelliği biraz küçültür; **Lasso** az sayıda özelliği tutup diğerlerini atar.
-            - Tabloda biri diğerinden belirgin düşük `cv_rmse_mean` ise o veri + özellik seti için daha uygun demektir; genel kural “her zaman X” yoktur.
-
-            ### RFE (Recursive Feature Elimination)
-            - **Ne:** Bir taban model (burada Ridge) ile özellikleri sırayla **en az önemli** görülenleri atarak alt küme seçmek.
-            - **Ne zaman iyi:** Özellik sayısı fazla ve birlikte küçültülmek istenen gruplar varsa. Maliyeti yüksektir; sonuç taban estimatore bağlıdır.
-
-            ### Diğer FS satırları (baseline, corr_prune, kbest)
-            - **baseline:** Tüm sayısal özelliklerle linear model — referans taban.
-            - **corr_prune:** Birbirine çok benzeyen (yüksek korelasyonlu) sütunları atarak çoklu doğrusal bağlantıyı azaltır.
-            - **kbest:** İstatistiksel skorla en ilişkili ilk *k* özelliği seçer (doğrusal ilişki varsayımına yakın).
-
-            ### XGBoost (XGB) — kısaca nasıl çalışır?
-            - **Gradient boosting:** Ardışık **karar ağaçları** eklenir; her yeni ağaç, önceki modellerin **hatalarını** (gradyan yönünde) düzeltmeye çalışır.
-            - **Güçlü yan:** Doğrusal olmayan etkileşimler, eşik davranışları, eksik değer toleransı (pipeline’da imputation ile).
-            - **Dikkat:** Çok az veride veya çok gürültülü hedefte aşırı uyum riski; hiperparametre araması önemlidir.
-
-            ### LightGBM (LGBM) — kısaca nasıl çalışır?
-            - Yine **gradient boosting** ailesi; ağaçları büyütme stratejisi (yaprak odaklı bölme, histogram tabanlı) genelde **hız** ve büyük veride iyi ölçeklenme sunar.
-            - XGB ile sonuç çoğu zaman yakın; hangisinin CV RMSE’si düşükse o veri/konfigürasyon için o kazanır — teorik üstünlük yoktur.
-
-            ### `tab_gbm` sütunları
-            - **`hedef`:** Hangi `y_*` hedefi için arama yapıldığı.
-            - **`cv_xgb` / `cv_lgbm`:** O hedef + o hedefin seçilmiş `X` matrisi ile RandomizedSearch sonrası **CV RMSE ortalaması** (düşük iyi).
-            - **`tree_winner`:** İki değerden hangisi daha düşük hatayı verdiyse (`XGB` veya `LGBM`).
-            - **`cv_tree_best`:** Kazananın RMSE’si (ikisinin minimumu).
-
-            ### LDA / QDA / Naive Bayes (§4.5)
-            - **LDA:** Ortak kovaryans varsayımı; linear sınır; `StandardScaler` ile birlikte kullanılır.
-            - **QDA:** Sınıf başına kovaryans; daha esnek sınır; küçük örnekte kararsız olabilir (`reg_param` ile düzenlenir).
-            - **Gaussian Naive Bayes:** Özelliklerin koşullu bağımsız olduğunu varsayar; hızlı baseline sınıflandırıcı.
-            - **Metrik:** Zaman serisi CV üzerinde **ROC-AUC** (yüksek iyi); tek sınıflı fold’lar atlanır.
-            """
+            section_reading(
+                """
+            - **Histogramlar:** Tek tepeli/simetrik → linear regresyon makul; uzun kuyruk → aykırılar RMSE’yi etkiler (§4’te tanımlanacak).
+            - **`tab_tgt`:** `std` ve `skew` horizon’lar arası kıyas için; çok çarpık hedefte ağaç modelleri (§5) denemeye değer.
+            - **Özellik sayısı:** Olay sayısının çok üstündeyse overfit riski — §4’te özellik seçimi (feature selection) şart.
+                """
+            )
         )
     )
 
     cells.append(md("## 3.5 Zaman serisi CV — öğrenme yolu"))
+    cells.append(
+        md(
+            section_story(
+                bridge="Hedefleri tanıdık; şimdi **nasıl ölçeceğimizi** öğreniyoruz — rastgele train/test burada yanıltıcıdır.",
+                purpose="Blok zaman serisi CV (block time-series CV): geçmiş fold’larda eğit, sonraki blokta skorla; `gap`, `offset`, gecikmeli özellik demosu; global `cv` nesnesini seçmek.",
+                why_now="§4–§8’deki tüm modeller aynı `cv` ile kıyaslanacak; adil karşılaştırma ancak böyle.",
+                when_use="Zaman sıralı panel veride (finans, sensör, satış) her zaman zaman serisi CV; i.i.d. varsayımı olan `KFold` değil.",
+            )
+            + """
+
+            #### Kavram: zaman serisi çapraz doğrulama (time-series cross-validation, CV)
+
+            - **Ne:** Veriyi `entry_date` sırasında dilimleyip modeli birkaç kez “geçmişe eğit, ileri dilimi test et” çalıştırmak ([makale özeti](https://emad-ezzeldin4.medium.com/introduction-to-time-series-cross-validation-mastering-predictive-accuracy-in-sequential-data-139710a07915)).
+            - **`gap`:** Eğitim ile test arasında boşluk (embargo).
+            - **`offset`:** İlk test fold’undan önce minimum geçmiş uzunluğu.
+            - **Nasıl okuruz:** `cv_rmse_mean` (regresyon) veya `cv_score_mean` (sınıflandırma) — düşük hata / yüksek AUC iyi; `*_std` yüksekse fold’lar arası tutarsızlık.
+            """
+        )
+    )
     cells.append(
         code(
             """
@@ -479,8 +476,6 @@ def main():
             cv_base = time_series_cv(5, gap=0, offset=0)
             display(cv_fold_sizes(cv_base, len(y_cv)))
             plot_all_cv_folds(X_cv, y_cv, pipe_cv, cv_base, x_series=x_cv)
-            tab_nogap = teach_cv_compare([("Ridge (gap=0)", pipe_cv)], X_cv, y_cv, cv_base)
-            display(tab_nogap)
 
             cv_gap = time_series_cv(5, gap=1, offset=0)
             tab_gap0 = teach_cv_compare([("gap=0", pipe_cv)], X_cv, y_cv, cv_base)
@@ -495,7 +490,6 @@ def main():
             tab_lag = teach_cv_compare(
                 [
                     ("lagsiz", pipe_cv),
-                    ("gecikmeli özellikler", pipe_cv),
                 ],
                 X_nolag,
                 y_nl,
@@ -520,10 +514,9 @@ def main():
                     format_sonuc(
                         "3.5 Zaman serisi CV",
                         [
-                            f"Demo hedef: `{_cv_demo_tgt}`; üretim CV: n_splits=5, gap={cv.gap}, offset={cv.offset}.",
-                            "Fold grafikleri: mavi=eğitim, yeşil=test, kırmızı=tahmin; boş eğitim fold’u atlanır.",
-                            "Gecikmeli kazanç özellikleri (`surprise_lag`, `prior_post_*`) tabloda CV RMSE ile kıyaslandı.",
-                            "§4–§8 tüm modeller bu CV nesnesini kullanır; satırlar `prepare_xy` ile entry_date sıralı.",
+                            f"Artık ortak kural net: `cv` = n_splits=5, gap={cv.gap}, offset={cv.offset} (demo: `{_cv_demo_tgt}`).",
+                            "Fold grafiği okuma: mavi=eğitim, yeşil=test, kırmızı=tahmin — geleceği eğitimde kullanmıyoruz.",
+                            "§4’te regresyon ve RMSE ile devam; aynı CV nesnesi değişmeden kalacak.",
                         ],
                     )
                 )
@@ -533,6 +526,22 @@ def main():
     )
 
     cells.append(md("## 4. Linear pipeline — her hedef için en iyi FS + reg"))
+    cells.append(
+        md(
+            section_story(
+                bridge="CV kuralını §3.5’te kabul ettik; şimdi **sürekli getiri** tahmini için linear modelleri deniyoruz.",
+                purpose="Her `y_*` için özellik seçimi (FS) + Ridge / Lasso / ElasticNet; `tab_fs_all`, `summary_linear`, tanı grafikleri.",
+                why_now="Regresyon doğrudan getiri büyüklüğünü verir; beat veya yön sorularından farklı (§4.5).",
+                when_use="Hedef sürekli ve kabaca doğrusal ilişkiler arıyorsanız; güçlü doğrusal olmayanlık için §5 ağaçlara bakın.",
+            )
+            + """
+
+            #### Kavram: RMSE (root mean squared error)
+
+            Tahmin hatalarının kare ortalamasının karekökü; **hedefle aynı birim** (getiri). **Düşük RMSE = daha iyi.** Aykırı hatalara duyarlıdır. Tablolarda `cv_rmse_mean` / `cv_rmse_std`: fold ortalaması ve dalgalanma.
+            """
+        )
+    )
     cells.append(
         code(
             """
@@ -692,9 +701,9 @@ def main():
                     format_sonuc(
                         "4a Özellik seçimi",
                         [
-                            f"`viz_target` = {viz_target}; her hedef için en düşük CV RMSE’li FS `summary_linear.best_fs` sütununda.",
-                            f"Örnek hedefte en iyi iki FS: {', '.join(top2)}.",
-                            "Fold grafikleri yalnızca örnek hedef için gösterildi; diğer hedefler tabloda.",
+                            f"Her horizon için bir FS kazandı — örnek hedef `{viz_target}`, en iyi iki yöntem: {', '.join(top2)}.",
+                            "Hikaye: önce özellik kümesi, sonra regresyon tipi; hedefler birbirinden farklı FS isteyebilir.",
+                            "Detay fold grafiği yalnızca `viz_target` için (performans).",
                         ],
                     )
                 )
@@ -712,9 +721,9 @@ def main():
                     format_sonuc(
                         "4b Düzenlileştirme",
                         [
-                            f"Örnek hedef `{viz_target}`: en iyi reg **{_win_reg}** (Ridge/Lasso/ENet CV RMSE minimumu).",
-                            f"Ridge kazanan hedef: {int((ridge_lasso_kiyaslama['kazanan'] == 'Ridge').sum())}; Lasso: {int((ridge_lasso_kiyaslama['kazanan'] == 'Lasso').sum())}.",
-                            "Üstteki fold grafiği seçilen FS+reg pipeline ile zaman içi test tahminlerini gösterir.",
+                            f"`{viz_target}` için en iyi düzenlileştirme: **{_win_reg}** (Ridge / Lasso / ElasticNet üçlüsünden).",
+                            f"Tüm horizon’larda Ridge {int((ridge_lasso_kiyaslama['kazanan'] == 'Ridge').sum())}, Lasso {int((ridge_lasso_kiyaslama['kazanan'] == 'Lasso').sum())} kez önde.",
+                            "Sırada §4.5: aynı veriyle **sınıflandırma** (beat ve yön) — farklı soru, farklı metrik (ROC-AUC).",
                         ],
                     )
                 )
@@ -725,24 +734,25 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §4 Tablolar (her hedef)
-            **`tab_fs_all`**
-            - **Ne işe yarar:** Her `y_*` hedefi için baseline / corr_prune / kbest / rfe CV RMSE karşılaştırması.
-            - **Nasıl okunur:** Satırlar `hedef` + `yöntem` ile gruplanır; her hedefte **en düşük** `cv_rmse_mean` kazanan FS olur (`best_fs`).
+            section_reading(
+                """
+            - **`tab_fs_all`:** Her hedefte dört FS yöntemi; en düşük `cv_rmse_mean` → `best_fs`.
 
-            **`summary_linear`**
-            - **Ne işe yarar:** Her hedef için seçilen FS, ardından Ridge/Lasso/ENet arasından en iyi reg ve birleşik linear CV RMSE.
-            - **Nasıl okunur:** `best_reg` o hedef için kullanılacak düzenlileştirilmiş model; `viz_target` satırı tüm hedefler içinde en düşük hatayı veren hedef (aşağıdaki grafikler onun üzerinden).
+            #### Kavram: özellik seçimi (feature selection)
+            - **baseline:** Tüm özellikler — referans.
+            - **corr_prune:** Yüksek korelasyonlu sütunları atar (§2 ile bağlantılı).
+            - **kbest:** İstatistiksel olarak en ilişkili ilk *k* özellik.
+            - **RFE (recursive feature elimination):** Ridge ile adım adım zayıf özellikleri eleyerek alt küme; maliyetli, taban modele bağlı.
 
-            **`reg_compare` (yalnızca `viz_target`)**
-            - **Ne işe yarar:** Seçilen özellik matrisinde üç reglinin kıyası (görselleştirilen hedef).
-            - **Nasıl okunur:** Düşük `cv_rmse_mean` iyi; bu tablo `viz_target` için özet.
+            - **`summary_linear`:** Seçilen FS + `best_reg` + `cv_rmse_linear`; rapor cümlesi buradan kurulur.
+            - **`ridge_lasso_kiyaslama`:** Aynı FS üzerinde Ridge vs Lasso; `kazanan` sütunu hızlı okuma.
 
-            **`ridge_lasso_kiyaslama` + çubuk grafik**
-            - **Ne işe yarar:** Her hedef için **aynı** seçilmiş FS matrisi (`best_fs` sonrası `X`) üzerinde yalnızca Ridge ve Lasso CV RMSE kıyası; hangi horizon’da hangi cezanın daha iyi olduğunu tek tabloda görmek.
-            - **Nasıl okunur:** `cv_ridge` / `cv_lasso` düşük olan o hedef için daha iyi. `fark_lasso_minus_ridge` **pozitif** ise Ridge daha iyi, **negatif** ise Lasso. `kazanan` sütunu bunu etiketler. Grafikte aynı hedef için yan yana çubuklarla karşılaştırılır. `best_reg` (summary_linear) üçlü (Ridge/Lasso/ENet) içinden seçilen “genel en iyi”dir; bu tablo özellikle **Ridge–Lasso ikilisini** ayırt etmek içindir.
-            """
+            #### Kavram: Ridge, Lasso, ElasticNet
+            - **Ridge:** L2 cezası — katsayıları küçültür, çoklu doğrusal bağlantıda stabil.
+            - **Lasso:** L1 cezası — bazı katsayıları sıfırlar (seyrek model).
+            - **ElasticNet:** L1+L2 karışımı. **Ne zaman:** Tabloda hangi ceza düşük CV RMSE veriyorsa o horizon için.
+                """
+            )
         )
     )
 
@@ -790,11 +800,12 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §4 Ridge / Lasso katsayı yolları
-            - **Ne işe yarar:** Ceza parametresi `alpha` arttıkça katsayıların küçülmesini (Ridge) veya sıfırlanmasını (Lasso) görmek; hangi özelliklerin “dayanıklı” kaldığını anlamak.
-            - **Nasıl okunur:** Log-x ekseninde solda düşük ceza, sağda güçlü ceza. Lasso’da çizgilerin eksene düşmesi = o özellik eleniyor. **Uyarı:** Burada `StandardScaler` dışında ham X kullanıldı; katsayı büyüklükleri doğrudan “önem sırası” değildir; yön ve stabilite için kullanın.
-            """
+            section_reading(
+                """
+            **Katsayı yolları (Ridge / Lasso):** `alpha` arttıkça ceza güçlenir; Lasso’da çizginin eksene düşmesi = özellik elendi.
+            Ham X ile çizildi — büyüklükleri doğrudan “önem sırası” değil; pipeline içi ölçekli katsayılarla kıyaslayın.
+                """
+            )
         )
     )
 
@@ -837,11 +848,11 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §4 Learning curve
-            - **Ne işe yarar:** Eğitim verisi büyüdükçe train / CV hatasının nasıl değiştiğini gösterir; daha fazla veri fayda eder mi (underfitting) yoksa model zaten doydu mu. **Üç grafik:** aynı `best_X` ve `y_all` (`viz_target`) için sırasıyla **Ridge**, **Lasso**, **ElasticNet** (GridSearch’te seçilen pipeline’lar).
-            - **Nasıl okunur:** İki eğri birbirine yaklaşıyor ve yavaş iyileşiyorsa genelde daha çok veri sınırlı kazanç. Train çok düşük, CV yüksek ve araları açık → overfit eğilimi. Skorlar RMSE (negatif skorun eksiği alınarak). Modeller arası fark: ceza türü farklı olduğundan eğriler üst üste binmeyebilir; hangi modelde CV eğrisi daha düşük ve stabilse o `reg_compare` ile tutarlıdır.
-            """
+            section_reading(
+                """
+            **Learning curve (öğrenme eğrisi):** Eğitim boyutu arttıkça train vs CV RMSE. Eğriler yakınsıyorsa ek veri sınırlı fayda; train düşük CV yüksek → **aşırı uyum (overfitting)** eğilimi.
+                """
+            )
         )
     )
 
@@ -865,12 +876,12 @@ def main():
             _lc_gap = float(test_rmse.mean(axis=1)[-1] - train_rmse.mean(axis=1)[-1])
             display(
                 Markdown(
-                    format_sonuc(
+                        format_sonuc(
                         "4c Tanı grafikleri",
                         [
-                            f"Learning curve: son eğitim boyutunda train–CV RMSE farkı ≈ {_lc_gap:.4f} ({viz_target}, Ridge gösterimi).",
-                            "Fark büyükse overfit eğilimi; eğriler yakınsıyorsa ek veri sınırlı kazanç sağlar.",
-                            "Residual grafiği sistematik eğri/fan göstermiyorsa yanlılık zayıf; aksi halde özellik/model revizyonu düşünülür.",
+                            f"`{viz_target}`: train–CV RMSE farkı ≈ {_lc_gap:.4f} — overfit mi, veri doygun mu buradan okunur.",
+                            "Residual grafiği rastgele bulut ise sistematik yanlılık zayıf.",
+                            "Linear hikaye burada; doğrusal olmayan desenler için §5 XGB/LGBM.",
                         ],
                     )
                 )
@@ -879,21 +890,26 @@ def main():
         )
     )
 
+    cells.append(md("## 4.5 Discriminant analizi ve Naive Bayes (zaman serisi CV)"))
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §4 Residual plot
-            - **Ne işe yarar:** Tahmin hatalarının (`y - ŷ`) tahmin büyüklüğüne göre desen gösterip heteroskedasticite / sistematik yanlılık var mı bakmak.
-            - **Nasıl okunur:** İdeal: noktalar `y=0` çevresinde rastgele bulut, belirgin eğri veya “fan” açılması yok. Sistematik eğri (ör. yüksek tahminde hep negatif hata) → model yapısı veya eksik özellik işareti.
+            section_story(
+                bridge="§4 getiri **büyüklüğünü** tahmin etti; şimdi **ikili sorular**: kazanç beat mi? Getiri pozitif mi?",
+                purpose="LDA, QDA, Gaussian Naive Bayes ile `eps_beat` ve her horizon için yön (`y_* > 0`); ROC-AUC (CV).",
+                why_now="Beat ile fiyat yönü farklı bilgiler; yatırım kararı için ikisini ayırmak gerekir.",
+                when_use="Hedef sınıf (0/1) ve özellikler sürekli olduğunda; LDA/QDA için ölçekleme şart (pipeline’da var).",
+            )
+            + """
 
-            ### Neden: Linear
-            - Baseline → özellik seçimi → düzenlileştirilmiş modeller sırası ödevde istendi.
-            - **Not:** `ridge_path`/`lasso_path` için veri `StandardScaler` dışında gösterildi; katsayı ölçeği yorum için `Pipeline` içi katsayılarla karşılaştırılmalıdır.
+            #### Kavram: LDA, QDA, Naive Bayes ve ROC-AUC
+
+            - **LDA (linear discriminant analysis):** Ortak kovaryans, linear sınır.
+            - **QDA (quadratic discriminant analysis):** Sınıf başına kovaryans, daha esnek; az veride kararsız olabilir.
+            - **Gaussian Naive Bayes:** Özellikler koşullu bağımsız varsayımı; hızlı baseline.
+            - **ROC-AUC:** 0.5 = rastgele, 1 = mükemmel ayrım; **yüksek iyi.** `eps_beat` ve EPS sütunları özelliklerden çıkarılır (sızıntı önleme).
             """
         )
     )
-
-    cells.append(md("## 4.5 Discriminant analizi ve Naive Bayes (zaman serisi CV)"))
     cells.append(
         code(
             """
@@ -941,13 +957,12 @@ def main():
             clf_beat_auc = float(tab_clf_beat["cv_score_mean"].max())
             display(
                 Markdown(
-                    format_sonuc(
+                        format_sonuc(
                         "4.5a eps_beat",
                         [
-                            f"Sınıf dengesi tablosu ve grafikte 0/1 dağılımı; kazanan model **{_beat_winner}** (CV ROC-AUC ≈ {clf_beat_auc:.3f}).",
-                            "Özelliklerden `eps_beat` ve EPS sütunları çıkarıldı (sızıntı önleme).",
-                            "Kazanç beat ≠ pozitif hisse getirisi; §4 regresyon hedefleri farklı bir soru.",
-                            "Fold grafiği: mavi=eğitim sınıfı, yeşil=test, kırmızı=tahmin (0/1).",
+                            f"Beat tahmini: **{_beat_winner}** önde (CV ROC-AUC ≈ {clf_beat_auc:.3f}) — 0.5 üstü sinyal var, mükemmel değil.",
+                            "Beat iyi tahmin etmek, hissenin yükselacağı anlamına gelmez; işlem kararı için §4 getiri tablolarına da bakın.",
+                            "Yön analizi §4.5b’de tüm horizon’lar için tabloda.",
                         ],
                     )
                 )
@@ -1004,10 +1019,9 @@ def main():
                         format_sonuc(
                             "4.5b yön",
                             [
-                                f"Her `y_*` için getiri > 0 ikili etiketi; tablo tüm horizon × (LDA/QDA/NB).",
-                                f"En yüksek max AUC horizon: **{viz_horizon}**; o horizon’da kazanan **{clf_dir_winner}** (≈ {clf_dir_auc:.3f}).",
-                                "Horizon başına fold grafiği yok (performans); örnek fold yalnızca `viz_horizon` için.",
-                                "ROC-AUC düşükse yön tahmini zayıf — regresyon RMSE ile birlikte yorumlayın.",
+                                f"Getiri yönü en ayırt edilebilir horizon: **{viz_horizon}**; model **{clf_dir_winner}** (AUC ≈ {clf_dir_auc:.3f}).",
+                                "Canlı ticaret için tek başına yeterli değil — CV metrikleri + maliyet + rejim değişimi gerekir.",
+                                "§5: aynı özelliklerle doğrusal olmayan regresyon (XGB / LGBM).",
                             ],
                         )
                     )
@@ -1030,16 +1044,33 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §4.5 LDA / QDA / Naive Bayes
-            - **Ne işe yarar:** Aynı özelliklerle **ikili sınıflandırma** (kazanç beat ve getiri yönü); regresyonla tamamlayıcı.
-            - **ROC-AUC:** 0.5 = rastgele, 1 = mükemmel ayrım; zaman serisi CV ortalaması rapor edilir.
-            - **`tab_clf_direction`:** Her horizon için üç model; `best_clf` sütunu horizon başına kazanan.
-            """
+            section_reading(
+                """
+            - **`tab_clf_beat` / çubuk grafik:** Üç sınıflandırıcı kıyası; tek fold’da tek sınıf varsa o fold atlanabilir.
+            - **`tab_clf_direction` + pivot:** Horizon başına hangi model (LDA/QDA/NB) daha iyi.
+            - **Fold grafiği (beat + bir horizon):** Sınıf etiketleri 0/1 — regresyon fold’larından farklı okuma.
+                """
+            )
         )
     )
 
     cells.append(md("## 5. XGBoost vs LightGBM"))
+    cells.append(
+        md(
+            section_story(
+                bridge="Linear ve sınıflandırma tablolarını gördük; şimdi **ağaç toplulukları (tree ensembles)** ile getiri regresyonunu güçlendirmeyi deniyoruz.",
+                purpose="Her hedef için seçilmiş FS matrisi üzerinde XGBoost (XGB) ve LightGBM (LGBM) RandomizedSearch; permutation importance ve (varsa) SHAP.",
+                why_now="Doğrusal olmayan etkileşim ve eşik davranışları için; CV RMSE ile §4’teki linear kıyaslanır.",
+                when_use="Büyük tabular veri, doğrusal model yetersiz kaldığında; yorum için permutation / SHAP (dikkat: korelasyonlu özelliklerde paylaşımlı önem).",
+            )
+            + """
+
+            #### Kavram: gradient boosting (XGB, LGBM)
+
+            Ardışık karar ağaçları önceki hataları düzeltir. **XGB** ve **LGBM** aynı aile; hangi horizon’da CV RMSE düşükse o kazanır — evrensel üstünlük yok.
+            """
+        )
+    )
     cells.append(
         code(
             """
@@ -1113,9 +1144,9 @@ def main():
                     format_sonuc(
                         "5 XGB / LGBM",
                         [
-                            f"XGB kazanan hedef: {_xgb_w}; LGBM: {_lgb_w} (CV RMSE tablosu).",
-                            f"`{viz_target}`: linear CV RMSE={_vt_lin:.4f}, en iyi ağaç={_vt_tree:.4f}.",
-                            "Fold grafiği örnek hedefte iki arama sonrası pipeline ile gösterildi.",
+                            f"Ağaç kazananları: XGB {_xgb_w} hedef, LGBM {_lgb_w} hedef — horizon’a göre değişir.",
+                            f"`{viz_target}`: linear {_vt_lin:.4f} vs en iyi ağaç {_vt_tree:.4f} RMSE — hangisi düşükse o veri için tercih.",
+                            "§6: aynı hedefler için **havuzlama** (pooled vs ticker dummy vs sektör).",
                         ],
                     )
                 )
@@ -1126,21 +1157,13 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §5 XGB vs LGBM
-            **`tab_gbm`**
-            - **Ne işe yarar:** Her hedef için o hedefin **seçilmiş özellik matrisi** (`best_fs` sonrası `X`) üzerinde RandomizedSearch CV RMSE; hangi horizon’da hangi ağaç daha iyi.
-            - **Nasıl okunur:** `tree_winner` ve `cv_tree_best` satır bazında kazanan; düşük `cv_tree_best` iyi. Alttaki iki satırlık tablo yalnızca `viz_target` (en iyi linear hataya sahip hedef) için tekrar özet.
-
-            **İki satırlık XGB / LGBM tablosu (`viz_target`)**
-            - **Ne işe yarar:** Permutation / SHAP hücreleriyle aynı veride kıyas.
-            - **Nasıl okunur:** `cv_rmse_mean` düşük olan tercih; `cv_rmse_std` fold’lar arası tutarlılık. Paket yoksa satır eksik kalır.
-
-            ### XGB ve LGBM tablosunu okurken
-            - Her iki model de **tabular** özelliklerden `y`’yi tahmin eden **ağaç topluluğu**dır; tahmin = birçok “eğer özellik A < eşik ise …” kuralının toplanmış hali.
-            - **XGB** ve **LGBM** farklı bölme/regularization varsayılanları ve arama uzayı kullanır; aynı `cv_rmse_mean`’e yakınsalar pratikte eşdeğer sayılabilir.
-            - **Neden biri diğerinden iyi çıkar?** Veri boyutu, özellik sayısı, gürültü, aykırılar, arama şansı (RandomizedSearch) ve fold bölünmesi — “her zaman LGBM” gibi genel bir kural yoktur; tablo **empirik** kazananı gösterir.
-            """
+            section_reading(
+                """
+            - **`tab_gbm`:** `tree_winner`, `cv_tree_best` — düşük RMSE iyi.
+            - **Permutation importance:** Özelliği karıştırınca skor ne kadar düşüyor; korelasyonlu özelliklerde paylaşımlı önem.
+            - **SHAP:** Yerel etki yönü ve büyüklüğü; alt örneklem (`sample`) üzerinde — evrensel iddia değil.
+                """
+            )
         )
     )
 
@@ -1169,11 +1192,13 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §5 Permutation importance (tablo + yatay bar)
-            - **Ne işe yarar:** Özellikleri karıştırarak model skoruna verilen marjinal katkıyı ölçer; “bu sütun gerçekten işe yarıyor mu?” sorusu.
-            - **Nasıl okunur:** Üst sıradaki (yüksek `perm_importance`) özellikler skora daha duyarlı. **Dikkat:** Korelasyonlu özelliklerde önem paylaşılır; sıfıra yakın değer “gereksiz” değil “bu shuffle ile ayırt edilemedi” olabilir. Tablo ilk 15 özellik; bar grafiği aynı sıralamanın görseli.
-            """
+            section_reading(
+                """
+            #### Kavram: permutation importance (permütasyon önemi)
+
+            Bir özelliği rastgele permüte ederek model skorundaki düşüşü ölçer. CV modeli sabit tahmin veriyorsa yeniden eğitimli yorum pipeline’ı (`gbm_permutation_importance`) devreye girer.
+                """
+            )
         )
     )
 
@@ -1197,15 +1222,34 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §5 SHAP summary plot
-            - **Ne işe yarar:** Tahminin özellik değerlerine göre yerel açılımını (ağaç modeli için) gösterir; yön (pozitif/negatif etki) ve büyüklük bir arada.
-            - **Nasıl okunur:** Yatay eksen SHAP değeri: sağa = o gözlemde hedefi artırmaya yönelik etki. Renk: özellik değeri yüksek mü düşük mü (legend). Çoklu özellik üst üste binmiş çizgiler = o özellik sık kullanılıyor. Örnek alt küme (`sample`) kullanıldığı için tüm evrene değil, görselleştirilen alt kümeye yorum yapın.
-            """
+            section_reading(
+                """
+            **SHAP:** Model-agnostic açıklama; örneklem üzerinde yorumlayın, tüm evren için genelleştirmeyin.
+                """
+            )
         )
     )
 
     cells.append(md("## 6. Single vs Multi vs Sector-featured (her hedef)"))
+    cells.append(
+        md(
+            section_story(
+                bridge="Model tipini seçtik; şimdi **veriyi nasıl havuzlayacağımızı** soruyoruz: tek model mi, ticker başına mı?",
+                purpose="Aynı RidgeCV pipeline ile dört mod: pooled zaman sırası, ticker dummy, + sektör getirisi, ticker başına ortalama CV.",
+                why_now="Hisse kimliği ve sektör ortak hareketi §2’de gördüğümüz yapıyla uyumlu mu test edilir.",
+                when_use="Çok ticker’lı panelde global model vs yerel model trade-off’u raporlanırken.",
+            )
+            + """
+
+            #### Kavram: havuzlama modları
+
+            - **pooled_by_entry_date:** Tek model, ortak katsayılar; ticker kimliği yok.
+            - **multi_ticker_dummies:** One-hot ticker — seviye farkları.
+            - **multi_dummies_sector_ret:** Sektör sepet getirisi eklenir.
+            - **single_per_ticker_mean_cv_rmse:** Her hisse ayrı model; tabloda ortalama RMSE.
+            """
+        )
+    )
     cells.append(
         code(
             """
@@ -1305,9 +1349,9 @@ def main():
                         format_sonuc(
                             "6 Havuzlama",
                             [
-                                f"Örnek hedef `{viz_target}`: en düşük CV RMSE modu **{_bm}**.",
-                                "Pivot `best_mode` sütunu her hedef için aynı seçimi özetler.",
-                                "Per-ticker ortalama CV, hisse başına ayrı model stratejisinin havuzla kıyasını verir.",
+                                f"`{viz_target}` için bu veri setinde en iyi havuzlama: **{_bm}**.",
+                                "§7’de tüm hedefler için FS + linear + ağaç + havuzlama tek tabloda birleşecek.",
+                                "Per-ticker ortalama yüksek `std` ise bazı hisselerde veri az veya gürültülü olabilir.",
                             ],
                         )
                     )
@@ -1318,31 +1362,27 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §6 Multi-mode (her hedef)
-            **`pooled_by_entry_date`**
-            - **Ne:** Tüm ticker’ların olayları **tek bir zaman sırasına** göre birleştirilir; **tek** RidgeCV modeli tüm satırlara ortak katsayılar öğrenir (ticker kimliği modele doğrudan verilmez).
-            - **Ne zaman iyi:** Hisse davranışı birbirine yakınsa ve ortak “faktörler” yeterliyse; parametre sayısı düşük, veri başına güç yüksek.
-
-            **`multi_ticker_dummies`**
-            - **Ne:** Özellik matrisine hisse adına **one-hot (dummy)** sütunları eklenir; model hem ortak özellikleri hem “bu satır hangi ticker?” bilgisini kullanır.
-            - **Ne zaman iyi:** Ticker’lar arası seviye farkı (intercept benzeri kayma) önemliyse pooled’a göre hata düşebilir; sütun sayısı artar → daha fazla veri ister.
-
-            **`multi_dummies_sector_ret`**
-            - **Ne:** Önce ticker dummy’leri eklenir, üzerine olay satırından gelen **sektör sepet getirisi** (`sector_feat_ret` / `sector_ret_1d`) de eklenir — aynı sektörün ortak hareketini açıkça verir.
-            - **Ne zaman iyi:** Sektör ortak bileşeni güçlüyse ve dummy’lerle birlikte ek bilgi taşıyorsa.
-
-            **`single_per_ticker_mean_cv_rmse`**
-            - **Ne:** Her ticker için **ayrı** küçük bir Ridge pipeline ile CV RMSE hesaplanır; tabloda bu RMSE’lerin **ortalaması** (ve `std`: ticker’lar arası yayılım) yazılır — yani “her hisse kendi modeli” stratejisinin özet metriği.
-            - **Ne zaman iyi:** Ticker’lar birbirinden çok farklı dinamik gösteriyorsa havuzdan iyi çıkabilir; veri az olan hisselerde CV gürültülü olabilir (`std` yüksek).
-
-            **Nasıl kıyaslanır?**
-            - Aynı `hedef` satırında dört `mode` için `cv_rmse_mean` **düşük** olan, o hedef + bu mimari ailesi için daha uygundur. Pivot’taki `best_mode` sütunu bunu satır bazında özetler.
-            """
+            section_reading(
+                """
+            - **`tab_multi` / pivot:** Aynı `hedef` için dört `mode` — düşük `cv_rmse_mean` iyi; `best_mode` sütunu kazananı işaret eder.
+            - **Pooled vs dummy:** Kimlik bilgisi eklemek bazen hata düşürür, bazen aşırı parametre ve gürültü getirir.
+            - **Per-ticker ortalama:** `std` yüksekse hisseler arası tutarsızlık — tek bir global kural yeterli olmayabilir.
+                """
+            )
         )
     )
 
     cells.append(md("## 7. Özet: hedef bazında seçilen modeller"))
+    cells.append(
+        md(
+            section_story(
+                bridge="§4–§6’da her hedef için ayrı kararlar verdik; şimdi **tek sayfalık hikaye özeti**.",
+                purpose="`summary_all`: FS, linear reg, ağaç kazananı, en iyi havuzlama ve `overall_pick` — sınıflandırma sütunlarıyla birlikte.",
+                why_now="Rapor ve sunumda “hangi horizon’da ne seçildi?” sorusuna tek tabloyla cevap.",
+                when_use="Ödev teslimi, jüri özeti veya kendi notlarınız için son kontrol listesi.",
+            )
+        )
+    )
     cells.append(
         code(
             """
@@ -1388,10 +1428,9 @@ def main():
                     format_sonuc(
                         "7 Özet",
                         [
-                            "Yukarıdaki tablo ve madde listesi tüm hedefler için §4–§6 seçimlerini birleştirir.",
-                            "`overall_pick`: linear CV RMSE ağaçtan düşükse linear reg, değilse `tree_winner`.",
-                            "§4.5: `clf_beat_*` ve `clf_direction_*` sütunları LDA/QDA/NB özetini ekler.",
-                            "Detay fold grafikleri `viz_target` / `viz_horizon` üzerinden okunmalı.",
+                            "Bu tablo ödevin **tek sayfa sonucu**: her `y_*` için hangi FS, linear, ağaç ve havuzlama kazandı.",
+                            "`overall_pick`: CV’de linear RMSE ağaçtan iyiyse linear, değilse ağaç — empirik kural, evrensel değil.",
+                            "Sınıflandırma sütunları beat/yönü regresyondan ayırır; §8’de satır bazlı tahminlere geçiyoruz.",
                         ],
                     )
                 )
@@ -1402,15 +1441,33 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §7 Özet tablo
-            - **Ne işe yarar:** Her hedef için §4’te seçilen FS+linear reg, §5’te ağaç kazananı ve (varsa) §6’da en iyi havuzlama modu tek satırda birleşir.
-            - **Nasıl okunur:** Rapor yazarken “`y_1w` için en iyi linear `rfe`+`Lasso`, ağaçta `LGBM` kazandı” gibi cümleler kurulur. `viz_target` en düşük `cv_rmse_linear` olan hedeftir (detay grafikler onun üzerinden).
-            """
+            section_reading(
+                """
+            - **`summary_all`:** Satır = horizon; sütunlar §4–§6 + sınıflandırma özeti.
+            - **`overall_pick`:** Rapor cümlesi için kısa etiket; detay için ilgili bölüm tablolarına dönün.
+            - **`viz_target`:** En düşük linear CV RMSE — fold ve SHAP grafikleri çoğunlukla burada.
+                """
+            )
         )
     )
 
     cells.append(md("## 8. Tahminler: tüm hisseler × tüm hedefler"))
+    cells.append(
+        md(
+            section_story(
+                bridge="Özet tabloyu gördük; şimdi **her olay satırı** için seçilen modellerin tahminlerini üretiyoruz.",
+                purpose="`predictions_all` (tüm ticker × hedef) ve `pred_rmse_by_ticker`; örnek hedefte holdout vs CV kıyası.",
+                why_now="Excel ve sunumda somut sayılar; fakat genelleme yorumu için CV ile ayırmak şart.",
+                when_use="Portföy/rapor tablosu istendiğinde; model seçimi için yine §3.5–§7 CV metrikleri esas.",
+            )
+            + """
+
+            #### Kavram: in-sample vs çapraz doğrulama (CV)
+
+            **In-sample** tahmin: modelin eğitildiği satırlar üzerinde — RMSE genelde **iyimser** (optimistic). **CV RMSE:** gelecek fold’larda ölçülen dürüst skor. Raporlarda CV’yi birincil, bu bölümü ikincil kullanın.
+            """
+        )
+    )
     cells.append(
         code(
             """
@@ -1493,9 +1550,9 @@ def main():
                         format_sonuc(
                             "8 Tahminler",
                             [
-                                f"`{viz_target}` son %20 zaman holdout RMSE≈{hold_rmse:.4f}; CV linear RMSE≈{cv_rm:.4f}.",
-                                "Holdout ile CV yakınsa genelleme tutarlı; fark büyükse fold/veri rejimi farklı olabilir.",
-                                "`predictions_all` in-sample tahminlerdir; rapor için CV tabloları esas alınmalıdır.",
+                                f"`{viz_target}`: holdout RMSE≈{hold_rmse:.4f}, CV≈{cv_rm:.4f} — yakınsa hikaye tutarlı.",
+                                "`predictions_all` raporlama içindir; **model seçimi** için §7 özet ve CV tabloları geçerlidir.",
+                                "§9: aynı sonuçları Excel ve sunuma aktarıyoruz.",
                             ],
                         )
                     )
@@ -1506,16 +1563,26 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §8 Tahmin tabloları
-            - **`predictions_all`:** Her kazanç olayı × her hedef için gerçekleşen getiri (`y_gercek`), seçilen FS+linear tahmin (`y_hat_linear`), XGB/LGBM (`y_hat_xgb`, `y_hat_lgbm`), `pred_fs` / `pred_linear_reg` hangi modelin kullanıldığını gösterir.
-            - **`pred_rmse_by_ticker`:** (hedef, ticker) kovasında RMSE — hangi hisse–horizon bileşiminde hata büyük hızlı görülür.
-            - **Not:** Bu tahminler eğitilmiş pipeline ile **aynı örnekler** üzerinde üretilir (in-sample); genelleme için CV tablolarındaki `cv_rmse_mean` esas alınmalıdır.
-            """
+            section_reading(
+                """
+            - **`predictions_all`:** `y_gercek`, `y_hat_*`, `pred_fs`, `pred_linear_reg` — hangi pipeline kullanıldığını gösterir.
+            - **`pred_rmse_by_ticker`:** Hangi (ticker, hedef) çiftinde hata şişiyor — in-sample RMSE, dikkatli yorum.
+                """
+            )
         )
     )
 
     cells.append(md("## 9. Teslim dosyaları (Excel + PPTX)"))
+    cells.append(
+        md(
+            section_story(
+                bridge="Analiz bitti; son adım **raporlama (delivery)** — öğretmen ve jüri için dosyalar.",
+                purpose="`data_*.xlsx` (panel, korelasyon, tahminler, sınıflandırma özetleri) ve `presentation_*.pptx` iskeleti.",
+                why_now="Ödev formatı Excel + sunum istiyor; not defteri ile dosyaların uyumlu olması gerekir.",
+                when_use="Teslim öncesi `STUDENT_SURNAME` güncelleyip tüm hücreleri baştan çalıştırın.",
+            )
+        )
+    )
     cells.append(
         code(
             """
@@ -1581,9 +1648,9 @@ def main():
                     format_sonuc(
                         "9 Teslim",
                         [
-                            f"Excel: `{xlsx_path}` — olay paneli, tahminler, korelasyon sayfaları.",
-                            f"Sunum: `{pptx_path}` — not defterindeki Sonuç maddeleriyle uyumlu özet.",
-                            "Tüm model seçimleri zaman serisi CV (blok fold) ile yapıldı; teslim öncesi hücreleri baştan çalıştırın.",
+                            f"Dosyalar hazır: `{xlsx_path}`, `{pptx_path}` — soyadınızı kontrol edin.",
+                            "Excel’deki tahminler in-sample; slaytlarda **CV RMSE ve kazanan model** cümlelerini §7’den alın.",
+                            "Hikaye tamam: veri → CV → modeller → özet → tahmin → teslim.",
                         ],
                     )
                 )
@@ -1594,16 +1661,12 @@ def main():
 
     cells.append(
         md(
-            """
-            ### Okuma rehberi — §9 Excel ve PPTX
-            **`data_*.xlsx`**
-            - **Ne işe yarar:** Ham geniş fiyat (`adj_close_wide`), olay paneli (`events_features`), özet korelasyon (`corr_matrix`, genelde en uzun pencere), pencere başı korelasyon sayfaları (`corr_1m`, …), **tüm olay × hedef tahminleri** (`predictions_all`), **hisse×hedef RMSE özeti** (`pred_rmse_by_ticker`).
-            - **Nasıl okunur:** Özellik mühendisliği ve model için ana tablo `events_features`. Tahmin sayfasında `pred_fs` ve `pred_linear_reg` o satır için kullanılan seçimi gösterir.
-
-            **`presentation_*.pptx`**
-            - **Ne işe yarar:** Sunum iskeleti; jüriye akışı anlatmak için madde madde özet; **Tahminler** slaytında Excel’e giren özet satırlar.
-            - **Nasıl okunur:** Slidelar otomatik metin; rakamları not defterindeki tablolarla güncellemeniz gerekir (CV RMSE, hangi model seçildi vb.).
-            """
+            section_reading(
+                """
+            - **Excel:** `events_features` ana panel; `predictions_all` / `pred_rmse_by_ticker` §8 çıktısı; korelasyon sayfaları §2.
+            - **PPTX:** Akış özeti; rakamları §7 `summary_all` ve CV tablolarından elle doğrulayın.
+                """
+            )
         )
     )
 
@@ -1612,16 +1675,14 @@ def main():
             """
             ## Checklist (ödev tablosu)
 
-            - [x] Korelasyon matrisi + heatmap
-            - [x] Dendrogram / clustermap
-            - [x] Rolling korelasyon
-            - [x] Feature importance (permutation + SHAP denemesi)
-            - [x] Hyperparameter tuning tabloları (RandomizedSearch sonuç nesnesi `rx`/`rl`)
-            - [x] Regularization karşılaştırması
-            - [x] LDA / QDA / Naive Bayes (zaman serisi CV, ROC-AUC)
-            - [x] Horizon / hedef bazında model seçimi ve özet tablo
-            - [x] Stock comparison (single/multi/sector)
-            - [x] Tahmin tablosu (tüm hisseler × hedefler) + Excel + PPTX özeti
+            - [x] Anlatı akışı: her § için “Bu adımda ne yapıyoruz?” + çıktı okuma + Sonuç
+            - [x] Korelasyon matrisi + heatmap / clustermap / rolling
+            - [x] Zaman serisi CV (blok fold, gap/offset) — tüm model kıyasları
+            - [x] Regresyon: FS + Ridge/Lasso/ElasticNet + learning curve
+            - [x] Sınıflandırma: LDA / QDA / Naive Bayes (`eps_beat` + getiri yönü, ROC-AUC)
+            - [x] XGB vs LGBM + permutation / SHAP
+            - [x] Havuzlama: pooled / dummy / sektör / per-ticker
+            - [x] Hedef bazında özet + tahmin tablosu + Excel + PPTX
             """
         )
     )
