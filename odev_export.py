@@ -13,6 +13,8 @@ def export_excel(
     events: pd.DataFrame,
     corr: Optional[pd.DataFrame] = None,
     corr_by_window: Optional[Dict[str, pd.DataFrame]] = None,
+    predictions: Optional[pd.DataFrame] = None,
+    pred_rmse_by_ticker: Optional[pd.DataFrame] = None,
 ) -> None:
     p = Path(path)
     with pd.ExcelWriter(p, engine="openpyxl") as w:
@@ -26,6 +28,10 @@ def export_excel(
                     continue
                 sheet = f"corr_{key}"[:31]
                 mat.to_excel(w, sheet_name=sheet)
+        if predictions is not None and not predictions.empty:
+            predictions.to_excel(w, sheet_name="predictions_all", index=False)
+        if pred_rmse_by_ticker is not None and not pred_rmse_by_ticker.empty:
+            pred_rmse_by_ticker.to_excel(w, sheet_name="pred_rmse_by_ticker", index=False)
 
 
 def export_presentation(

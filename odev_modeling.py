@@ -65,6 +65,48 @@ def prepare_xy(
     return X, y, use_cols
 
 
+def prepare_xy_with_meta(
+    df: pd.DataFrame,
+    target: str,
+    feature_cols: List[str],
+    meta_cols: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, np.ndarray, List[str], pd.DataFrame]:
+    """prepare_xy ile aynı satır maskesi; ticker/tarih vb. meta ayrı döner (tahmin tablosu için)."""
+    meta_cols = meta_cols or ["ticker", "entry_date", "event_date", "sector"]
+    use_cols = [c for c in feature_cols if c in df.columns]
+    X = df[use_cols].copy()
+    X = X.replace([np.inf, -np.inf], np.nan)
+    y = df[target].values.astype(float)
+    mask = np.isfinite(y)
+    keep_meta = [c for c in meta_cols if c in df.columns]
+    meta = df.loc[mask, keep_meta].reset_index(drop=True)
+    X = X.loc[mask].reset_index(drop=True)
+    y = y[mask]
+    return X, y, use_cols, meta
+
+
+def materialize_fs_matrix(
+    fs_name: str,
+    X: pd.DataFrame,
+    y: np.ndarray,
+    bundles: Dict[str, Any],
+) -> pd.DataFrame:
+    """CV sırasında üretilen FS bundle'larından tam veri üzerinde özellik alt matrisi (tahmin için)."""
+    if fs_name == "baseline":
+        return X.copy()
+    if fs_name == "corr_prune":
+        return bundles["corr_prune"]["X"].copy()
+    if fs_name not in bundles:
+        return X.copy()
+    pipe = bundles[fs_name]["model"]
+    pipe.fit(X, y)
+    if fs_name == "kbest":
+        return X.loc[:, pipe.named_steps["kb"].get_support()].copy()
+    if fs_name == "rfe":
+        return X.loc[:, pipe.named_steps["rfe"].support_].copy()
+    return X.copy()
+
+
 def numeric_pipeline(model) -> Pipeline:
     return Pipeline(
         steps=[

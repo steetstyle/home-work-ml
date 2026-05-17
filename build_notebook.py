@@ -41,7 +41,7 @@ def main():
 
             **Özellikler:** `feature_date` = girişten bir iş günü önce. Piyasa/sektör sinyalleri **ETF yok**: tüm evrenin ve (kendi hariç) sektör arkadaşlarının eşit ağırlıklı kapanış sepeti. EPS yfinance’dan; eksikler NaN kalabilir.
 
-            **Bu not defterinde:** Aşağıdaki bölümlerde her önemli tablo ve grafik için kısa bir **Okuma rehberi** (ne işe yarar / nasıl okunur) vardır; raporda cümlelerinizi bu başlıklardan türetebilirsiniz.
+            **Bu not defterinde:** Aşağıdaki bölümlerde her önemli tablo ve grafik için kısa bir **Okuma rehberi** (ne işe yarar / nasıl okunur) vardır; **Kavramlar** bölümünde RMSE, CV, Ridge/Lasso, RFE, XGB/LGBM ve havuzlama modları özetlenir.
             """
         )
     )
@@ -91,7 +91,9 @@ def main():
                 cv_eval,
                 grid_regularized,
                 linear_baseline_cv,
+                materialize_fs_matrix,
                 numeric_pipeline,
+                prepare_xy_with_meta,
                 randomized_lgbm,
                 randomized_xgb,
                 rfe_cv,
@@ -275,26 +277,66 @@ def main():
         )
     )
 
+    cells.append(
+        md(
+            """
+            ## Kavramlar: RMSE, CV, düzenlileştirme, RFE, XGB / LGBM
+
+            ### RMSE (Root Mean Squared Error)
+            - **Ne:** Tahmin hatalarının karelerinin ortalamasının karekökü; **hedefle aynı birimde** (burada yaklaşık “getiri” birimi).
+            - **Nasıl okunur:** **Düşük RMSE = daha iyi**. Büyük aykırı hatalara duyarlıdır (hata karesi olduğu için tek bir çok kötü tahmin RMSE’yi şişirir).
+
+            ### CV (Cross-Validation) ve `cv_rmse_mean` / `cv_rmse_std`
+            - **Ne:** Veriyi zamana göre dilimleyip (burada `TimeSeriesSplit`) modeli birkaç kez “geçmişe eğit, bir sonraki dilime skorla” tekrarlamak.
+            - **`cv_rmse_mean`:** Fold’larda elde edilen RMSE’lerin ortalaması — **genel performans** özeti.
+            - **`cv_rmse_std`:** Fold’lar arası dalgalanma; **yüksek** ise model veya veri fold’a duyarlı, güven aralığı geniş demektir.
+            - **Neden gerekli:** Tek bir train/test bölmesi şansa bağlıdır; CV daha stabil kıyas verir.
+
+            ### Ridge
+            - **Ne:** Tüm katsayılara **L2 cezası** (katsayıların kareleri toplanır) ekleyen linear regresyon; katsayıları küçültür, çoklu doğrusal bağlantıda (collinearity) daha stabil olabilir.
+            - **Ne zaman iyi:** Çok sayıda zayıf ama bilgi taşıyan özellik; hedef kabaca doğrusal; aykırı gözlem sayısı çok aşırı değil.
+
+            ### Lasso
+            - **Ne:** **L1 cezası** — bazı katsayıları **tam sıfır** yaparak özellik seçimi gibi davranır (seyrek model).
+            - **Ne zaman iyi:** Gerçekten birkaç güçlü özellik yeterliyse veya gürültülü sütunları elemek istiyorsanız. Ridge’e göre daha “keskin” seçim; yanlış ayarlanırsa önemli özellikleri de sıfırlayabilir.
+
+            ### Ridge vs Lasso (sezgisel)
+            - **Ridge** çoğu özelliği biraz küçültür; **Lasso** az sayıda özelliği tutup diğerlerini atar.
+            - Tabloda biri diğerinden belirgin düşük `cv_rmse_mean` ise o veri + özellik seti için daha uygun demektir; genel kural “her zaman X” yoktur.
+
+            ### RFE (Recursive Feature Elimination)
+            - **Ne:** Bir taban model (burada Ridge) ile özellikleri sırayla **en az önemli** görülenleri atarak alt küme seçmek.
+            - **Ne zaman iyi:** Özellik sayısı fazla ve birlikte küçültülmek istenen gruplar varsa. Maliyeti yüksektir; sonuç taban estimatore bağlıdır.
+
+            ### Diğer FS satırları (baseline, corr_prune, kbest)
+            - **baseline:** Tüm sayısal özelliklerle linear model — referans taban.
+            - **corr_prune:** Birbirine çok benzeyen (yüksek korelasyonlu) sütunları atarak çoklu doğrusal bağlantıyı azaltır.
+            - **kbest:** İstatistiksel skorla en ilişkili ilk *k* özelliği seçer (doğrusal ilişki varsayımına yakın).
+
+            ### XGBoost (XGB) — kısaca nasıl çalışır?
+            - **Gradient boosting:** Ardışık **karar ağaçları** eklenir; her yeni ağaç, önceki modellerin **hatalarını** (gradyan yönünde) düzeltmeye çalışır.
+            - **Güçlü yan:** Doğrusal olmayan etkileşimler, eşik davranışları, eksik değer toleransı (pipeline’da imputation ile).
+            - **Dikkat:** Çok az veride veya çok gürültülü hedefte aşırı uyum riski; hiperparametre araması önemlidir.
+
+            ### LightGBM (LGBM) — kısaca nasıl çalışır?
+            - Yine **gradient boosting** ailesi; ağaçları büyütme stratejisi (yaprak odaklı bölme, histogram tabanlı) genelde **hız** ve büyük veride iyi ölçeklenme sunar.
+            - XGB ile sonuç çoğu zaman yakın; hangisinin CV RMSE’si düşükse o veri/konfigürasyon için o kazanır — teorik üstünlük yoktur.
+
+            ### `tab_gbm` sütunları
+            - **`hedef`:** Hangi `y_*` hedefi için arama yapıldığı.
+            - **`cv_xgb` / `cv_lgbm`:** O hedef + o hedefin seçilmiş `X` matrisi ile RandomizedSearch sonrası **CV RMSE ortalaması** (düşük iyi).
+            - **`tree_winner`:** İki değerden hangisi daha düşük hatayı verdiyse (`XGB` veya `LGBM`).
+            - **`cv_tree_best`:** Kazananın RMSE’si (ikisinin minimumu).
+            """
+        )
+    )
+
     cells.append(md("## 4. Linear pipeline — her hedef için en iyi FS + reg"))
     cells.append(
         code(
             """
             cv = time_series_cv(5)
             per_target = {}
-
-
-            def _fs_feature_matrix(fs_name, X, y, bundles):
-                if fs_name == "baseline":
-                    return X.copy()
-                if fs_name == "corr_prune":
-                    return bundles["corr_prune"]["X"].copy()
-                pipe = bundles[fs_name]["model"]
-                pipe.fit(X, y)
-                if fs_name == "kbest":
-                    return X.loc[:, pipe.named_steps["kb"].get_support()].copy()
-                if fs_name == "rfe":
-                    return X.loc[:, pipe.named_steps["rfe"].support_].copy()
-                return X.copy()
 
 
             for tgt in target_columns():
@@ -318,7 +360,7 @@ def main():
                 if s.dropna().empty:
                     continue
                 best_fs = str(s.idxmin())
-                best_X = _fs_feature_matrix(best_fs, X_all, y_all, bundles)
+                best_X = materialize_fs_matrix(best_fs, X_all, y_all, bundles)
                 res_ridge = grid_regularized(best_X, y_all, cv, kind="ridge")
                 res_lasso = grid_regularized(best_X, y_all, cv, kind="lasso")
                 res_enet = grid_regularized(best_X, y_all, cv, kind="elastic")
@@ -381,6 +423,47 @@ def main():
                 }
             )
             display(reg_compare)
+
+            ridge_lasso_kiyaslama = pd.DataFrame(
+                [
+                    {
+                        "hedef": t,
+                        "cv_ridge": per_target[t]["res_ridge"]["cv_rmse_mean"],
+                        "cv_lasso": per_target[t]["res_lasso"]["cv_rmse_mean"],
+                        "std_ridge": per_target[t]["res_ridge"]["cv_rmse_std"],
+                        "std_lasso": per_target[t]["res_lasso"]["cv_rmse_std"],
+                    }
+                    for t in per_target
+                ]
+            )
+            ridge_lasso_kiyaslama["fark_lasso_minus_ridge"] = (
+                ridge_lasso_kiyaslama["cv_lasso"] - ridge_lasso_kiyaslama["cv_ridge"]
+            )
+            ridge_lasso_kiyaslama["kazanan"] = np.where(
+                ridge_lasso_kiyaslama["cv_ridge"] <= ridge_lasso_kiyaslama["cv_lasso"],
+                "Ridge",
+                "Lasso",
+            )
+            display(ridge_lasso_kiyaslama.sort_values("hedef"))
+            print(
+                "Özet: Ridge kazanan hedef sayısı:",
+                int((ridge_lasso_kiyaslama["kazanan"] == "Ridge").sum()),
+                "| Lasso:",
+                int((ridge_lasso_kiyaslama["kazanan"] == "Lasso").sum()),
+            )
+
+            plt.figure(figsize=(10, 5))
+            x = np.arange(len(ridge_lasso_kiyaslama))
+            w = 0.35
+            rl_df = ridge_lasso_kiyaslama.sort_values("hedef").reset_index(drop=True)
+            plt.bar(x - w / 2, rl_df["cv_ridge"], width=w, label="Ridge")
+            plt.bar(x + w / 2, rl_df["cv_lasso"], width=w, label="Lasso")
+            plt.xticks(x, rl_df["hedef"], rotation=45, ha="right")
+            plt.ylabel("CV RMSE")
+            plt.title("Ridge vs Lasso — tüm hedefler (her hedefin seçilmiş FS matrisi)")
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
             """
         )
     )
@@ -400,6 +483,10 @@ def main():
             **`reg_compare` (yalnızca `viz_target`)**
             - **Ne işe yarar:** Seçilen özellik matrisinde üç reglinin kıyası (görselleştirilen hedef).
             - **Nasıl okunur:** Düşük `cv_rmse_mean` iyi; bu tablo `viz_target` için özet.
+
+            **`ridge_lasso_kiyaslama` + çubuk grafik**
+            - **Ne işe yarar:** Her hedef için **aynı** seçilmiş FS matrisi (`best_fs` sonrası `X`) üzerinde yalnızca Ridge ve Lasso CV RMSE kıyası; hangi horizon’da hangi cezanın daha iyi olduğunu tek tabloda görmek.
+            - **Nasıl okunur:** `cv_ridge` / `cv_lasso` düşük olan o hedef için daha iyi. `fark_lasso_minus_ridge` **pozitif** ise Ridge daha iyi, **negatif** ise Lasso. `kazanan` sütunu bunu etiketler. Grafikte aynı hedef için yan yana çubuklarla karşılaştırılır. `best_reg` (summary_linear) üçlü (Ridge/Lasso/ENet) içinden seçilen “genel en iyi”dir; bu tablo özellikle **Ridge–Lasso ikilisini** ayırt etmek içindir.
             """
         )
     )
@@ -459,23 +546,33 @@ def main():
     cells.append(
         code(
             """
-            train_sizes, train_scores, test_scores = learning_curve(
-                res_ridge["model"],
-                best_X,
-                y_all,
-                cv=cv,
-                scoring="neg_root_mean_squared_error",
-                train_sizes=np.linspace(0.2, 1.0, 5),
-                n_jobs=1,
-            )
-            train_rmse = -train_scores
-            test_rmse = -test_scores
-            plt.figure()
-            plt.plot(train_sizes, train_rmse.mean(axis=1), label="train")
-            plt.plot(train_sizes, test_rmse.mean(axis=1), label="cv")
-            plt.legend()
-            plt.title(f"Learning curve (Ridge) — örnek hedef: {viz_target}")
-            plt.show()
+            for _lc_name, _lc_model in (
+                ("Ridge", res_ridge["model"]),
+                ("Lasso", res_lasso["model"]),
+                ("ElasticNet", res_enet["model"]),
+            ):
+                train_sizes, train_scores, test_scores = learning_curve(
+                    _lc_model,
+                    best_X,
+                    y_all,
+                    cv=cv,
+                    scoring="neg_root_mean_squared_error",
+                    train_sizes=np.linspace(0.2, 1.0, 5),
+                    n_jobs=1,
+                )
+                train_rmse = -train_scores
+                test_rmse = -test_scores
+                plt.figure(figsize=(8, 4))
+                plt.plot(train_sizes, train_rmse.mean(axis=1), label="train")
+                plt.plot(train_sizes, test_rmse.mean(axis=1), label="cv")
+                plt.legend()
+                plt.xlabel("Eğitim örnek sayısı")
+                plt.ylabel("RMSE")
+                plt.title(
+                    f"Learning curve ({_lc_name}) — {viz_target}"
+                )
+                plt.tight_layout()
+                plt.show()
             """
         )
     )
@@ -484,8 +581,8 @@ def main():
         md(
             """
             ### Okuma rehberi — §4 Learning curve
-            - **Ne işe yarar:** Eğitim verisi büyüdükçe train / CV hatasının nasıl değiştiğini gösterir; daha fazla veri fayda eder mi (underfitting) yoksa model zaten doydu mu.
-            - **Nasıl okunur:** İki eğri birbirine yaklaşıyor ve yavaş iyileşiyorsa genelde daha çok veri sınırlı kazanç. Train çok düşük, CV yüksek ve araları açık → overfit eğilimi. Buradaki skorlar RMSE (negatif skorun eksiği alınarak).
+            - **Ne işe yarar:** Eğitim verisi büyüdükçe train / CV hatasının nasıl değiştiğini gösterir; daha fazla veri fayda eder mi (underfitting) yoksa model zaten doydu mu. **Üç grafik:** aynı `best_X` ve `y_all` (`viz_target`) için sırasıyla **Ridge**, **Lasso**, **ElasticNet** (GridSearch’te seçilen pipeline’lar).
+            - **Nasıl okunur:** İki eğri birbirine yaklaşıyor ve yavaş iyileşiyorsa genelde daha çok veri sınırlı kazanç. Train çok düşük, CV yüksek ve araları açık → overfit eğilimi. Skorlar RMSE (negatif skorun eksiği alınarak). Modeller arası fark: ceza türü farklı olduğundan eğriler üst üste binmeyebilir; hangi modelde CV eğrisi daha düşük ve stabilse o `reg_compare` ile tutarlıdır.
             """
         )
     )
@@ -594,7 +691,12 @@ def main():
 
             **İki satırlık XGB / LGBM tablosu (`viz_target`)**
             - **Ne işe yarar:** Permutation / SHAP hücreleriyle aynı veride kıyas.
-            - **Nasıl okunur:** `cv_rmse_mean` düşük olan tercih; paket yoksa satır eksik kalır.
+            - **Nasıl okunur:** `cv_rmse_mean` düşük olan tercih; `cv_rmse_std` fold’lar arası tutarlılık. Paket yoksa satır eksik kalır.
+
+            ### XGB ve LGBM tablosunu okurken
+            - Her iki model de **tabular** özelliklerden `y`’yi tahmin eden **ağaç topluluğu**dır; tahmin = birçok “eğer özellik A < eşik ise …” kuralının toplanmış hali.
+            - **XGB** ve **LGBM** farklı bölme/regularization varsayılanları ve arama uzayı kullanır; aynı `cv_rmse_mean`’e yakınsalar pratikte eşdeğer sayılabilir.
+            - **Neden biri diğerinden iyi çıkar?** Veri boyutu, özellik sayısı, gürültü, aykırılar, arama şansı (RandomizedSearch) ve fold bölünmesi — “her zaman LGBM” gibi genel bir kural yoktur; tablo **empirik** kazananı gösterir.
             """
         )
     )
@@ -762,8 +864,24 @@ def main():
         md(
             """
             ### Okuma rehberi — §6 Multi-mode (her hedef)
-            - **Ne işe yarar:** Her `y_*` için pooled / ticker dummy / sektör getirisi / ticker başına tek model stratejilerinin CV RMSE karşılaştırması.
-            - **Nasıl okunur:** `tab_multi` uzun formatta; pivot tabloda `best_mode` o hedef için en düşük ortalama hatayı veren satır (mode). Bunu `summary_linear` ile yan yana düşün: biri özellik seçimi+reg, diğeri havuzlama mimarisi.
+            **`pooled_by_entry_date`**
+            - **Ne:** Tüm ticker’ların olayları **tek bir zaman sırasına** göre birleştirilir; **tek** RidgeCV modeli tüm satırlara ortak katsayılar öğrenir (ticker kimliği modele doğrudan verilmez).
+            - **Ne zaman iyi:** Hisse davranışı birbirine yakınsa ve ortak “faktörler” yeterliyse; parametre sayısı düşük, veri başına güç yüksek.
+
+            **`multi_ticker_dummies`**
+            - **Ne:** Özellik matrisine hisse adına **one-hot (dummy)** sütunları eklenir; model hem ortak özellikleri hem “bu satır hangi ticker?” bilgisini kullanır.
+            - **Ne zaman iyi:** Ticker’lar arası seviye farkı (intercept benzeri kayma) önemliyse pooled’a göre hata düşebilir; sütun sayısı artar → daha fazla veri ister.
+
+            **`multi_dummies_sector_ret`**
+            - **Ne:** Önce ticker dummy’leri eklenir, üzerine olay satırından gelen **sektör sepet getirisi** (`sector_feat_ret` / `sector_ret_1d`) de eklenir — aynı sektörün ortak hareketini açıkça verir.
+            - **Ne zaman iyi:** Sektör ortak bileşeni güçlüyse ve dummy’lerle birlikte ek bilgi taşıyorsa.
+
+            **`single_per_ticker_mean_cv_rmse`**
+            - **Ne:** Her ticker için **ayrı** küçük bir Ridge pipeline ile CV RMSE hesaplanır; tabloda bu RMSE’lerin **ortalaması** (ve `std`: ticker’lar arası yayılım) yazılır — yani “her hisse kendi modeli” stratejisinin özet metriği.
+            - **Ne zaman iyi:** Ticker’lar birbirinden çok farklı dinamik gösteriyorsa havuzdan iyi çıkabilir; veri az olan hisselerde CV gürültülü olabilir (`std` yüksek).
+
+            **Nasıl kıyaslanır?**
+            - Aynı `hedef` satırında dört `mode` için `cv_rmse_mean` **düşük** olan, o hedef + bu mimari ailesi için daha uygundur. Pivot’taki `best_mode` sütunu bunu satır bazında özetler.
             """
         )
     )
@@ -797,7 +915,86 @@ def main():
         )
     )
 
-    cells.append(md("## 8. Teslim dosyaları (Excel + PPTX)"))
+    cells.append(md("## 8. Tahminler: tüm hisseler × tüm hedefler"))
+    cells.append(
+        code(
+            """
+            from IPython.display import display
+
+            REG_KEY = {"Ridge": "res_ridge", "Lasso": "res_lasso", "ElasticNet": "res_enet"}
+
+
+            def _rmse_vec(a, b):
+                a = np.asarray(a, dtype=float)
+                b = np.asarray(b, dtype=float)
+                m = np.isfinite(a) & np.isfinite(b)
+                if not m.any():
+                    return np.nan
+                return float(np.sqrt(np.mean((a[m] - b[m]) ** 2)))
+
+
+            pred_parts = []
+            for tgt, d in per_target.items():
+                X, y, cols, meta = prepare_xy_with_meta(events, tgt, feats)
+                Xm = materialize_fs_matrix(d["best_fs"], X, y, d["bundles"])
+                rk = REG_KEY[d["best_reg"]]
+                yhat_lin = d[rk]["model"].predict(Xm)
+                rxd = d.get("rx") or {}
+                yhat_xgb = (
+                    rxd["model"].predict(Xm)
+                    if rxd.get("model") is not None
+                    else np.full(len(yhat_lin), np.nan)
+                )
+                rld = d.get("rl") or {}
+                yhat_lgb = (
+                    rld["model"].predict(Xm)
+                    if rld.get("model") is not None
+                    else np.full(len(yhat_lin), np.nan)
+                )
+                block = meta.copy()
+                block["hedef"] = tgt
+                block["y_gercek"] = y
+                block["y_hat_linear"] = yhat_lin
+                block["y_hat_xgb"] = yhat_xgb
+                block["y_hat_lgbm"] = yhat_lgb
+                block["pred_fs"] = d["best_fs"]
+                block["pred_linear_reg"] = d["best_reg"]
+                block["linear_residual"] = y - yhat_lin
+                pred_parts.append(block)
+
+            predictions_all = pd.concat(pred_parts, ignore_index=True)
+            rmse_rows = []
+            for (h, tk), g in predictions_all.groupby(["hedef", "ticker"], sort=False):
+                rmse_rows.append(
+                    {
+                        "hedef": h,
+                        "ticker": tk,
+                        "n": int(len(g)),
+                        "rmse_linear": _rmse_vec(g["y_gercek"].values, g["y_hat_linear"].values),
+                        "rmse_xgb": _rmse_vec(g["y_gercek"].values, g["y_hat_xgb"].values),
+                        "rmse_lgbm": _rmse_vec(g["y_gercek"].values, g["y_hat_lgbm"].values),
+                    }
+                )
+            pred_rmse_by_ticker = pd.DataFrame(rmse_rows)
+            print("predictions_all:", predictions_all.shape)
+            display(predictions_all.head(25))
+            display(pred_rmse_by_ticker.sort_values("rmse_linear").head(25))
+            """
+        )
+    )
+
+    cells.append(
+        md(
+            """
+            ### Okuma rehberi — §8 Tahmin tabloları
+            - **`predictions_all`:** Her kazanç olayı × her hedef için gerçekleşen getiri (`y_gercek`), seçilen FS+linear tahmin (`y_hat_linear`), XGB/LGBM (`y_hat_xgb`, `y_hat_lgbm`), `pred_fs` / `pred_linear_reg` hangi modelin kullanıldığını gösterir.
+            - **`pred_rmse_by_ticker`:** (hedef, ticker) kovasında RMSE — hangi hisse–horizon bileşiminde hata büyük hızlı görülür.
+            - **Not:** Bu tahminler eğitilmiş pipeline ile **aynı örnekler** üzerinde üretilir (in-sample); genelleme için CV tablolarındaki `cv_rmse_mean` esas alınmalıdır.
+            """
+        )
+    )
+
+    cells.append(md("## 9. Teslim dosyaları (Excel + PPTX)"))
     cells.append(
         code(
             """
@@ -814,6 +1011,8 @@ def main():
                 events,
                 corr=corr_primary,
                 corr_by_window=corr_sheets,
+                predictions=predictions_all,
+                pred_rmse_by_ticker=pred_rmse_by_ticker,
             )
             print("Yazıldı:", xlsx_path)
 
@@ -823,6 +1022,21 @@ def main():
                 ("Modeller", ["Linear: FS + Ridge/Lasso/ENet", "XGB vs LGBM RandomizedSearch"]),
                 ("Sonuç", ["Hedef bazında FS+reg seçimi", "viz_target grafikleri", "GBM + multi özet"]),
             ]
+            pred_lines = [
+                f"Tahmin satırı (tüm hedef × olay): {len(predictions_all)}",
+                "Excel: predictions_all + pred_rmse_by_ticker sayfaları",
+                "Özet: in-sample tahmin; genelleme için CV RMSE tablolarına bakın.",
+            ]
+            if len(pred_rmse_by_ticker):
+                worst = pred_rmse_by_ticker.nlargest(3, "rmse_linear")
+                pred_lines.append(
+                    "Yüksek linear RMSE (örnek): "
+                    + ", ".join(
+                        f"{r.ticker}/{r.hedef}={r.rmse_linear:.4f}"
+                        for _, r in worst.iterrows()
+                    )
+                )
+            bullets.append(("Tahminler (tüm hisseler)", pred_lines))
             pptx_path = f"presentation_{STUDENT_SURNAME}.pptx"
             export_presentation(
                 pptx_path,
@@ -837,13 +1051,13 @@ def main():
     cells.append(
         md(
             """
-            ### Okuma rehberi — §8 Excel ve PPTX
+            ### Okuma rehberi — §9 Excel ve PPTX
             **`data_*.xlsx`**
-            - **Ne işe yarar:** Ham geniş fiyat (`adj_close_wide`), olay paneli (`events_features`), özet korelasyon (`corr_matrix`, genelde en uzun pencere) ve pencere başı korelasyon sayfaları (`corr_1m`, …).
-            - **Nasıl okunur:** Özellik mühendisliği ve model için ana tablo `events_features`. Korelasyon sayfaları EDA ile tutarlı mı diye kontrol edin; sütun adları ticker sembolleri.
+            - **Ne işe yarar:** Ham geniş fiyat (`adj_close_wide`), olay paneli (`events_features`), özet korelasyon (`corr_matrix`, genelde en uzun pencere), pencere başı korelasyon sayfaları (`corr_1m`, …), **tüm olay × hedef tahminleri** (`predictions_all`), **hisse×hedef RMSE özeti** (`pred_rmse_by_ticker`).
+            - **Nasıl okunur:** Özellik mühendisliği ve model için ana tablo `events_features`. Tahmin sayfasında `pred_fs` ve `pred_linear_reg` o satır için kullanılan seçimi gösterir.
 
             **`presentation_*.pptx`**
-            - **Ne işe yarar:** Sunum iskeleti; jüriye akışı anlatmak için madde madde özet.
+            - **Ne işe yarar:** Sunum iskeleti; jüriye akışı anlatmak için madde madde özet; **Tahminler** slaytında Excel’e giren özet satırlar.
             - **Nasıl okunur:** Slidelar otomatik metin; rakamları not defterindeki tablolarla güncellemeniz gerekir (CV RMSE, hangi model seçildi vb.).
             """
         )
@@ -862,6 +1076,7 @@ def main():
             - [x] Regularization karşılaştırması
             - [x] Horizon / hedef bazında model seçimi ve özet tablo
             - [x] Stock comparison (single/multi/sector)
+            - [x] Tahmin tablosu (tüm hisseler × hedefler) + Excel + PPTX özeti
             """
         )
     )
