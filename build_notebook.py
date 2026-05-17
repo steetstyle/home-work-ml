@@ -1488,6 +1488,12 @@ def main():
                     return np.nan
                 return float(np.sqrt(np.mean((a[m] - b[m]) ** 2)))
 
+            def _yon_isabet_pct(series) -> float:
+                s = pd.Series(series, dtype=float).dropna()
+                if s.empty:
+                    return float("nan")
+                return float(s.mean() * 100.0)
+
             def _add_errors(block, y, yhat, prefix):
                 y = np.asarray(y, dtype=float)
                 yhat = np.asarray(yhat, dtype=float)
@@ -1499,9 +1505,9 @@ def main():
                         np.abs(y) > 1e-8, np.abs(err) / np.abs(y) * 100.0, np.nan
                     )
                 ok = np.isfinite(y) & np.isfinite(yhat)
-                block[f"yön_doğru_{prefix}"] = np.where(
-                    ok, (np.sign(y) == np.sign(yhat)).astype(float), np.nan
-                )
+                hit = np.where(ok, (np.sign(y) == np.sign(yhat)).astype(float), np.nan)
+                block[f"yön_doğru_{prefix}"] = hit
+                block[f"yön_isabet_pct_{prefix}"] = np.where(ok, hit * 100.0, np.nan)
 
 
             pred_parts = []
@@ -1539,19 +1545,78 @@ def main():
                 pred_parts.append(block)
 
             predictions_all = pd.concat(pred_parts, ignore_index=True)
+
+            SHORT_H = ("y_1d", "y_3d", "y_1w")
+            LONG_H = ("y_1m", "y_3m")
+            YON_MODELS = [
+                ("linear", "yön_doğru_linear"),
+                ("xgb", "yön_doğru_xgb"),
+                ("lgbm", "yön_doğru_lgbm"),
+            ]
+
             rmse_rows = []
             for (h, tk), g in predictions_all.groupby(["hedef", "ticker"], sort=False):
-                rmse_rows.append(
+                row = {
+                    "hedef": h,
+                    "ticker": tk,
+                    "n": int(len(g)),
+                    "rmse_linear": _rmse_vec(g["y_gercek"].values, g["y_hat_linear"].values),
+                    "rmse_xgb": _rmse_vec(g["y_gercek"].values, g["y_hat_xgb"].values),
+                    "rmse_lgbm": _rmse_vec(g["y_gercek"].values, g["y_hat_lgbm"].values),
+                }
+                for name, col in YON_MODELS:
+                    row[f"yon_isabet_pct_{name}"] = _yon_isabet_pct(g[col])
+                rmse_rows.append(row)
+            pred_rmse_by_ticker = pd.DataFrame(rmse_rows)
+
+            yon_rows = []
+            for tgt, g in predictions_all.groupby("hedef", sort=False):
+                for name, col in YON_MODELS:
+                    yon_rows.append(
+                        {
+                            "hedef": tgt,
+                            "vade": "kısa" if tgt in SHORT_H else ("uzun" if tgt in LONG_H else "orta"),
+                            "model": name,
+                            "n": int(g[col].notna().sum()),
+                            "yon_isabet_pct": _yon_isabet_pct(g[col]),
+                        }
+                    )
+            pred_yon_by_horizon = pd.DataFrame(yon_rows)
+            if not pred_yon_by_horizon.empty:
+                pv_yon = pred_yon_by_horizon.pivot_table(
+                    index="hedef", columns="model", values="yon_isabet_pct", aggfunc="first"
+                )
+                display(pv_yon.assign(kazanan_yon=pv_yon.idxmax(axis=1)))
+                idx_best = pred_yon_by_horizon.groupby("hedef")["yon_isabet_pct"].idxmax()
+                display(pred_yon_by_horizon.loc[idx_best].reset_index(drop=True))
+
+            vade_rows = []
+            for name, col in YON_MODELS:
+                sub = pred_yon_by_horizon[pred_yon_by_horizon["model"] == name]
+                kisa = sub[sub["hedef"].isin(SHORT_H)]["yon_isabet_pct"].mean()
+                uzun = sub[sub["hedef"].isin(LONG_H)]["yon_isabet_pct"].mean()
+                vade_rows.append(
                     {
-                        "hedef": h,
-                        "ticker": tk,
-                        "n": int(len(g)),
-                        "rmse_linear": _rmse_vec(g["y_gercek"].values, g["y_hat_linear"].values),
-                        "rmse_xgb": _rmse_vec(g["y_gercek"].values, g["y_hat_xgb"].values),
-                        "rmse_lgbm": _rmse_vec(g["y_gercek"].values, g["y_hat_lgbm"].values),
+                        "model": name,
+                        "kısa_vade_yon_pct": kisa,
+                        "uzun_vade_yon_pct": uzun,
                     }
                 )
-            pred_rmse_by_ticker = pd.DataFrame(rmse_rows)
+            pred_yon_vade_ozet = pd.DataFrame(vade_rows)
+            display(pred_yon_vade_ozet)
+            _best_short_yon = (
+                str(pred_yon_vade_ozet.loc[pred_yon_vade_ozet["kısa_vade_yon_pct"].idxmax(), "model"])
+                if pred_yon_vade_ozet["kısa_vade_yon_pct"].notna().any()
+                else "—"
+            )
+            _best_long_yon = (
+                str(pred_yon_vade_ozet.loc[pred_yon_vade_ozet["uzun_vade_yon_pct"].idxmax(), "model"])
+                if pred_yon_vade_ozet["uzun_vade_yon_pct"].notna().any()
+                else "—"
+            )
+            _pct_short = pred_yon_vade_ozet["kısa_vade_yon_pct"].max()
+            _pct_long = pred_yon_vade_ozet["uzun_vade_yon_pct"].max()
+
             print("predictions_all:", predictions_all.shape)
             display(predictions_all.tail(25))
             display(pred_rmse_by_ticker.sort_values("rmse_linear").tail(25))
@@ -1575,8 +1640,9 @@ def main():
                             "8 Tahminler",
                             [
                                 f"`{viz_target}`: holdout RMSE≈{hold_rmse:.4f}, CV≈{cv_rm:.4f} — yakınsa hikaye tutarlı.",
-                                "`predictions_all` raporlama içindir; **model seçimi** için §7 özet ve CV tabloları geçerlidir.",
-                                "§9: aynı sonuçları Excel ve sunuma aktarıyoruz.",
+                                f"Yön isabeti (in-sample): kısa vade ({', '.join(SHORT_H)}) en iyi **{_best_short_yon}** ≈{_pct_short:.1f}%; uzun ({', '.join(LONG_H)}) **{_best_long_yon}** ≈{_pct_long:.1f}%.",
+                                "`pred_yon_by_horizon` / `pred_yon_vade_ozet` — horizon ve model kıyası; %50 üstü hafif sinyal, tek başına işlem kuralı değil.",
+                                "§9: tahminler + yön özetleri Excel’e yazılır.",
                             ],
                         )
                     )
@@ -1589,8 +1655,10 @@ def main():
         md(
             section_reading(
                 """
-            - **`predictions_all`:** `y_gercek`, `y_hat_*`, `pred_fs`, `pred_linear_reg` — hangi pipeline kullanıldığını gösterir.
-            - **`pred_rmse_by_ticker`:** Hangi (ticker, hedef) çiftinde hata şişiyor — in-sample RMSE, dikkatli yorum.
+            - **`predictions_all`:** `y_gercek`, `y_hat_*`, `err_*`, `pct_err_*`, `yön_isabet_pct_*` (satırda %100 = yön doğru).
+            - **`pred_yon_by_horizon`:** Her `hedef` × model için yön isabet %; pivot’ta `kazanan_yon`.
+            - **`pred_yon_vade_ozet`:** Kısa (`y_1d`,`y_3d`,`y_1w`) vs uzun (`y_1m`,`y_3m`) ortalama yön % — hangi model hangi vadede önde.
+            - **`pred_rmse_by_ticker`:** RMSE + `yon_isabet_pct_*` — hisse×hedef detayı (in-sample).
                 """
             )
         )
@@ -1627,6 +1695,8 @@ def main():
                 corr_by_window=corr_sheets,
                 predictions=predictions_all,
                 pred_rmse_by_ticker=pred_rmse_by_ticker,
+                pred_yon_by_horizon=pred_yon_by_horizon if "pred_yon_by_horizon" in dir() else None,
+                pred_yon_vade_ozet=pred_yon_vade_ozet if "pred_yon_vade_ozet" in dir() else None,
                 clf_beat_summary=_clf_beat_x,
                 clf_direction_summary=_clf_dir_x,
             )
@@ -1647,7 +1717,7 @@ def main():
             ]
             pred_lines = [
                 f"Tahmin satırı (tüm hedef × olay): {len(predictions_all)}",
-                "Excel: predictions_all + pred_rmse_by_ticker sayfaları",
+                "Excel: predictions_all, pred_rmse_by_ticker, pred_yon_by_horizon, pred_yon_vade_ozet",
                 "Özet: in-sample tahmin; genelleme için CV RMSE tablolarına bakın.",
             ]
             if len(pred_rmse_by_ticker):

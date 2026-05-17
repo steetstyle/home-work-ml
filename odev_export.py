@@ -15,6 +15,8 @@ def export_excel(
     corr_by_window: Optional[Dict[str, pd.DataFrame]] = None,
     predictions: Optional[pd.DataFrame] = None,
     pred_rmse_by_ticker: Optional[pd.DataFrame] = None,
+    pred_yon_by_horizon: Optional[pd.DataFrame] = None,
+    pred_yon_vade_ozet: Optional[pd.DataFrame] = None,
     clf_beat_summary: Optional[pd.DataFrame] = None,
     clf_direction_summary: Optional[pd.DataFrame] = None,
 ) -> None:
@@ -34,6 +36,10 @@ def export_excel(
             predictions.to_excel(w, sheet_name="predictions_all", index=False)
         if pred_rmse_by_ticker is not None and not pred_rmse_by_ticker.empty:
             pred_rmse_by_ticker.to_excel(w, sheet_name="pred_rmse_by_ticker", index=False)
+        if pred_yon_by_horizon is not None and not pred_yon_by_horizon.empty:
+            pred_yon_by_horizon.to_excel(w, sheet_name="pred_yon_by_horizon", index=False)
+        if pred_yon_vade_ozet is not None and not pred_yon_vade_ozet.empty:
+            pred_yon_vade_ozet.to_excel(w, sheet_name="pred_yon_vade_ozet", index=False)
         if clf_beat_summary is not None and not clf_beat_summary.empty:
             clf_beat_summary.to_excel(w, sheet_name="clf_beat_cv", index=False)
         if clf_direction_summary is not None and not clf_direction_summary.empty:
