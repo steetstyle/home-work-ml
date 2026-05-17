@@ -15,6 +15,8 @@ def export_excel(
     corr_by_window: Optional[Dict[str, pd.DataFrame]] = None,
     predictions: Optional[pd.DataFrame] = None,
     pred_rmse_by_ticker: Optional[pd.DataFrame] = None,
+    clf_beat_summary: Optional[pd.DataFrame] = None,
+    clf_direction_summary: Optional[pd.DataFrame] = None,
 ) -> None:
     p = Path(path)
     with pd.ExcelWriter(p, engine="openpyxl") as w:
@@ -32,6 +34,10 @@ def export_excel(
             predictions.to_excel(w, sheet_name="predictions_all", index=False)
         if pred_rmse_by_ticker is not None and not pred_rmse_by_ticker.empty:
             pred_rmse_by_ticker.to_excel(w, sheet_name="pred_rmse_by_ticker", index=False)
+        if clf_beat_summary is not None and not clf_beat_summary.empty:
+            clf_beat_summary.to_excel(w, sheet_name="clf_beat_cv", index=False)
+        if clf_direction_summary is not None and not clf_direction_summary.empty:
+            clf_direction_summary.to_excel(w, sheet_name="clf_direction_cv", index=False)
 
 
 def export_presentation(

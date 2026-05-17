@@ -19,6 +19,9 @@ from sklearn.model_selection import (
     cross_val_score,
 )
 from sklearn.base import clone
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
+from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.naive_bayes import GaussianNB
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -179,6 +182,121 @@ def prepare_xy_with_meta(
     X = X.loc[mask].reset_index(drop=True)
     y = y[mask]
     return X, y, use_cols, meta
+
+
+def prepare_xy_class(
+    df: pd.DataFrame,
+    label_col: str,
+    feature_cols: List[str],
+    date_col: str = "entry_date",
+) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
+    """Chronological rows with binary labels in {0, 1}."""
+    work = df.sort_values(date_col) if date_col in df.columns else df
+    use_cols = [c for c in feature_cols if c in work.columns and c != label_col]
+    X = work[use_cols].copy()
+    X = X.replace([np.inf, -np.inf], np.nan)
+    y_raw = work[label_col].values.astype(float)
+    mask = np.isfinite(y_raw) & np.isin(y_raw, [0.0, 1.0])
+    X = X.loc[mask].reset_index(drop=True)
+    y = y_raw[mask].astype(int)
+    return X, y, use_cols
+
+
+def classification_pipeline(est) -> Pipeline:
+    return Pipeline(
+        [
+            ("imp", SimpleImputer(strategy="median")),
+            ("sc", StandardScaler()),
+            ("m", est),
+        ]
+    )
+
+
+def discriminant_bundle() -> Dict[str, Pipeline]:
+    return {
+        "LDA": classification_pipeline(LinearDiscriminantAnalysis()),
+        "QDA": classification_pipeline(QuadraticDiscriminantAnalysis(reg_param=0.1)),
+        "NaiveBayes": classification_pipeline(GaussianNB()),
+    }
+
+
+def cv_eval_classification(
+    model,
+    X: pd.DataFrame,
+    y: np.ndarray,
+    cv: Union[TimeSeriesBlockCV, Any],
+    scoring: str = "roc_auc",
+) -> Dict[str, float]:
+    """Time-series CV with ROC-AUC (fallback accuracy when AUC undefined)."""
+    scores: List[float] = []
+    Xv = X
+    for tr, te in cv.split(Xv, y):
+        y_tr, y_te = y[tr], y[te]
+        if len(np.unique(y_tr)) < 2:
+            continue
+        est = clone(model)
+        Xi_tr = Xv.iloc[tr] if hasattr(Xv, "iloc") else Xv[tr]
+        Xi_te = Xv.iloc[te] if hasattr(Xv, "iloc") else Xv[te]
+        try:
+            est.fit(Xi_tr, y_tr)
+        except Exception:
+            continue
+        try:
+            if scoring == "roc_auc" and len(np.unique(y_te)) >= 2:
+                proba = est.predict_proba(Xi_te)
+                if proba.shape[1] < 2:
+                    scores.append(float(accuracy_score(y_te, est.predict(Xi_te))))
+                else:
+                    scores.append(float(roc_auc_score(y_te, proba[:, 1])))
+            else:
+                scores.append(float(accuracy_score(y_te, est.predict(Xi_te))))
+        except Exception:
+            continue
+    if not scores:
+        return {"cv_score_mean": float("nan"), "cv_score_std": float("nan")}
+    arr = np.asarray(scores, dtype=float)
+    return {
+        "cv_score_mean": float(np.nanmean(arr)),
+        "cv_score_std": float(np.nanstd(arr)),
+    }
+
+
+def teach_cv_compare_classify(
+    label_specs: Sequence[LabelSpec],
+    X: pd.DataFrame,
+    y: np.ndarray,
+    cv: TimeSeriesBlockCV,
+    *,
+    scoring: str = "roc_auc",
+    plot: bool = False,
+    x_series: Optional[np.ndarray] = None,
+) -> pd.DataFrame:
+    rows = []
+    sizes = cv_fold_sizes(cv, len(y))
+    n_train_min = int(sizes["n_train"].min()) if not sizes.empty else 0
+    n_test_min = int(sizes["n_test"].min()) if not sizes.empty else 0
+    first_est = None
+    first_X = None
+    for spec in label_specs:
+        name = spec[0]
+        est = spec[1]
+        Xm = spec[2] if len(spec) > 2 else X
+        if first_est is None:
+            first_est, first_X = est, Xm
+        out = cv_eval_classification(est, Xm, y, cv, scoring=scoring)
+        rows.append(
+            {
+                "yöntem": name,
+                "cv_score_mean": out["cv_score_mean"],
+                "cv_score_std": out["cv_score_std"],
+                "n_train_min": n_train_min,
+                "n_test_min": n_test_min,
+            }
+        )
+    tab = pd.DataFrame(rows)
+    if plot and first_est is not None and first_X is not None:
+        plot_all_cv_folds(first_X, y.astype(float), first_est, cv, x_series=x_series)
+    return tab
 
 
 def create_lagged_features(

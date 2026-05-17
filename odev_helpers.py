@@ -680,6 +680,38 @@ def feature_columns(df: pd.DataFrame) -> List[str]:
     return num
 
 
+CLASSIFICATION_BEAT_EXCLUDE = [
+    "eps_beat",
+    "eps_surprise_pct",
+    "eps_estimate",
+    "eps_reported",
+]
+
+
+def classification_feature_columns(
+    df: pd.DataFrame,
+    label_kind: str = "beat",
+    horizon: Optional[str] = None,
+) -> List[str]:
+    """Features for classification; excludes label leakage columns."""
+    cols = feature_columns(df)
+    if label_kind == "beat":
+        excl = set(CLASSIFICATION_BEAT_EXCLUDE)
+        return [c for c in cols if c not in excl]
+    return cols
+
+
+def make_direction_label(events: pd.DataFrame, horizon_col: str) -> pd.Series:
+    """Binary 1 if forward return > 0, NaN if return missing."""
+    if horizon_col not in events.columns:
+        return pd.Series(np.nan, index=events.index)
+    r = events[horizon_col].astype(float)
+    out = pd.Series(np.nan, index=events.index, dtype=float)
+    m = np.isfinite(r.values)
+    out.loc[m] = (r.loc[m] > 0).astype(float)
+    return out
+
+
 def assemble_dataset(
     progress: bool = False,
     force_refresh_raw: bool = False,

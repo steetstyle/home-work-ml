@@ -83,15 +83,20 @@ def main():
                 primary_corr_from_window_bundles,
                 slice_returns_calendar_tail,
                 target_columns,
+                classification_feature_columns,
+                make_direction_label,
             )
             from IPython.display import Markdown, display
 
             from odev_modeling import (
                 add_sector_peer_returns,
                 add_ticker_dummies,
+                classification_pipeline,
                 correlation_prune_cv,
                 cv_eval,
+                cv_eval_classification,
                 cv_fold_sizes,
+                discriminant_bundle,
                 format_sonuc,
                 grid_regularized,
                 linear_baseline_cv,
@@ -99,12 +104,14 @@ def main():
                 numeric_pipeline,
                 pick_viz_target,
                 plot_all_cv_folds,
+                prepare_xy_class,
                 prepare_xy_with_meta,
                 randomized_lgbm,
                 randomized_xgb,
                 rfe_cv,
                 select_k_best_cv,
                 teach_cv_compare,
+                teach_cv_compare_classify,
                 gbm_permutation_importance,
                 time_series_cv,
                 prepare_xy,
@@ -450,6 +457,12 @@ def main():
             - **`cv_xgb` / `cv_lgbm`:** O hedef + o hedefin seçilmiş `X` matrisi ile RandomizedSearch sonrası **CV RMSE ortalaması** (düşük iyi).
             - **`tree_winner`:** İki değerden hangisi daha düşük hatayı verdiyse (`XGB` veya `LGBM`).
             - **`cv_tree_best`:** Kazananın RMSE’si (ikisinin minimumu).
+
+            ### LDA / QDA / Naive Bayes (§4.5)
+            - **LDA:** Ortak kovaryans varsayımı; linear sınır; `StandardScaler` ile birlikte kullanılır.
+            - **QDA:** Sınıf başına kovaryans; daha esnek sınır; küçük örnekte kararsız olabilir (`reg_param` ile düzenlenir).
+            - **Gaussian Naive Bayes:** Özelliklerin koşullu bağımsız olduğunu varsayar; hızlı baseline sınıflandırıcı.
+            - **Metrik:** Zaman serisi CV üzerinde **ROC-AUC** (yüksek iyi); tek sınıflı fold’lar atlanır.
             """
         )
     )
@@ -880,6 +893,152 @@ def main():
         )
     )
 
+    cells.append(md("## 4.5 Discriminant analizi ve Naive Bayes (zaman serisi CV)"))
+    cells.append(
+        code(
+            """
+            if "cv" not in dir():
+                cv = time_series_cv(5, gap=0, offset=0)
+            clf_models = discriminant_bundle()
+            feats_beat = classification_feature_columns(events, "beat")
+            X_beat, y_beat, _ = prepare_xy_class(events, "eps_beat", feats_beat)
+
+            tab_balance = (
+                pd.Series(y_beat, name="eps_beat")
+                .value_counts()
+                .rename_axis("sinif")
+                .reset_index(name="adet")
+            )
+            tab_balance["oran"] = tab_balance["adet"] / tab_balance["adet"].sum()
+            display(tab_balance)
+            tab_balance.set_index("sinif")["adet"].plot.bar(
+                figsize=(4, 3), title="eps_beat sınıf dengesi"
+            )
+            plt.ylabel("adet")
+            plt.tight_layout()
+            plt.show()
+
+            specs_beat = [(n, clf_models[n]) for n in clf_models]
+            tab_clf_beat = teach_cv_compare_classify(specs_beat, X_beat, y_beat, cv)
+            display(tab_clf_beat)
+            tab_clf_beat.set_index("yöntem")["cv_score_mean"].plot.bar(
+                figsize=(5, 3), title="ROC-AUC (CV) — eps_beat"
+            )
+            plt.ylabel("ROC-AUC")
+            plt.tight_layout()
+            plt.show()
+
+            _beat_winner = str(tab_clf_beat.loc[tab_clf_beat["cv_score_mean"].idxmax(), "yöntem"])
+            _best_beat_pipe = clf_models[_beat_winner]
+            teach_cv_compare_classify(
+                [(_beat_winner, _best_beat_pipe)],
+                X_beat,
+                y_beat,
+                cv,
+                plot=True,
+                x_series=np.arange(len(y_beat)),
+            )
+            clf_beat_auc = float(tab_clf_beat["cv_score_mean"].max())
+            display(
+                Markdown(
+                    format_sonuc(
+                        "4.5a eps_beat",
+                        [
+                            f"Sınıf dengesi tablosu ve grafikte 0/1 dağılımı; kazanan model **{_beat_winner}** (CV ROC-AUC ≈ {clf_beat_auc:.3f}).",
+                            "Özelliklerden `eps_beat` ve EPS sütunları çıkarıldı (sızıntı önleme).",
+                            "Kazanç beat ≠ pozitif hisse getirisi; §4 regresyon hedefleri farklı bir soru.",
+                            "Fold grafiği: mavi=eğitim sınıfı, yeşil=test, kırmızı=tahmin (0/1).",
+                        ],
+                    )
+                )
+            )
+
+            rows_dir = []
+            feats_dir = classification_feature_columns(events, "direction")
+            for h in target_columns():
+                ev_h = events.copy()
+                ev_h["_dir"] = make_direction_label(events, h)
+                Xd, yd, _ = prepare_xy_class(ev_h, "_dir", feats_dir)
+                if len(yd) < 30 or len(np.unique(yd)) < 2:
+                    continue
+                tab_h = teach_cv_compare_classify(specs_beat, Xd, yd, cv)
+                for _, r in tab_h.iterrows():
+                    rows_dir.append(
+                        {
+                            "hedef": h,
+                            "yöntem": r["yöntem"],
+                            "cv_score_mean": r["cv_score_mean"],
+                            "cv_score_std": r["cv_score_std"],
+                        }
+                    )
+            tab_clf_direction = pd.DataFrame(rows_dir)
+            display(tab_clf_direction)
+
+            if not tab_clf_direction.empty:
+                pv_auc = tab_clf_direction.pivot_table(
+                    index="hedef", columns="yöntem", values="cv_score_mean", aggfunc="first"
+                )
+                display(pv_auc.assign(best_clf=pv_auc.idxmax(axis=1)))
+                viz_horizon = str(pv_auc.max(axis=1).idxmax())
+                clf_dir_winner = str(pv_auc.loc[viz_horizon].idxmax())
+                clf_dir_auc = float(pv_auc.loc[viz_horizon].max())
+                pv_auc.max(axis=1).plot.bar(
+                    figsize=(8, 3), title="En iyi model ROC-AUC (horizon başına)"
+                )
+                plt.ylabel("max ROC-AUC")
+                plt.tight_layout()
+                plt.show()
+                ev_v = events.copy()
+                ev_v["_dir"] = make_direction_label(events, viz_horizon)
+                Xv, yv, _ = prepare_xy_class(ev_v, "_dir", feats_dir)
+                teach_cv_compare_classify(
+                    [(clf_dir_winner, clf_models[clf_dir_winner])],
+                    Xv,
+                    yv,
+                    cv,
+                    plot=True,
+                    x_series=np.arange(len(yv)),
+                )
+                display(
+                    Markdown(
+                        format_sonuc(
+                            "4.5b yön",
+                            [
+                                f"Her `y_*` için getiri > 0 ikili etiketi; tablo tüm horizon × (LDA/QDA/NB).",
+                                f"En yüksek max AUC horizon: **{viz_horizon}**; o horizon’da kazanan **{clf_dir_winner}** (≈ {clf_dir_auc:.3f}).",
+                                "Horizon başına fold grafiği yok (performans); örnek fold yalnızca `viz_horizon` için.",
+                                "ROC-AUC düşükse yön tahmini zayıf — regresyon RMSE ile birlikte yorumlayın.",
+                            ],
+                        )
+                    )
+                )
+            else:
+                viz_horizon = ""
+                clf_dir_winner = ""
+                clf_dir_auc = float("nan")
+                display(
+                    Markdown(
+                        format_sonuc(
+                            "4.5b yön",
+                            ["Yeterli etiketli satır yok; yön sınıflandırması atlandı."],
+                        )
+                    )
+                )
+            """
+        )
+    )
+
+    cells.append(
+        md(
+            """
+            ### Okuma rehberi — §4.5 LDA / QDA / Naive Bayes
+            - **Ne işe yarar:** Aynı özelliklerle **ikili sınıflandırma** (kazanç beat ve getiri yönü); regresyonla tamamlayıcı.
+            - **ROC-AUC:** 0.5 = rastgele, 1 = mükemmel ayrım; zaman serisi CV ortalaması rapor edilir.
+            - **`tab_clf_direction`:** Her horizon için üç model; `best_clf` sütunu horizon başına kazanan.
+            """
+        )
+    )
+
     cells.append(md("## 5. XGBoost vs LightGBM"))
     cells.append(
         code(
@@ -1206,11 +1365,23 @@ def main():
                 ),
                 axis=1,
             )
+            if "tab_clf_beat" in dir() and not tab_clf_beat.empty:
+                summary_all["clf_beat_winner"] = _beat_winner
+                summary_all["clf_beat_auc"] = clf_beat_auc
+            if "tab_clf_direction" in dir() and not tab_clf_direction.empty:
+                summary_all["clf_direction_horizon"] = viz_horizon
+                summary_all["clf_direction_winner"] = clf_dir_winner
+                summary_all["clf_direction_auc"] = clf_dir_auc
             display(summary_all)
             for _, row in summary_all.iterrows():
                 print(
                     f"- {row['hedef']}: FS={row['best_fs']}, linear={row['best_reg']}, "
                     f"ağaç={row.get('tree_winner', '—')}, özet={row['overall_pick']}"
+                )
+            if "clf_beat_winner" in summary_all.columns:
+                print(
+                    f"- Sınıflandırma eps_beat: {_beat_winner} (AUC≈{clf_beat_auc:.3f}); "
+                    f"yön {viz_horizon}: {clf_dir_winner} (AUC≈{clf_dir_auc:.3f})"
                 )
             display(
                 Markdown(
@@ -1219,7 +1390,8 @@ def main():
                         [
                             "Yukarıdaki tablo ve madde listesi tüm hedefler için §4–§6 seçimlerini birleştirir.",
                             "`overall_pick`: linear CV RMSE ağaçtan düşükse linear reg, değilse `tree_winner`.",
-                            "Detay fold grafikleri `viz_target` üzerinden okunmalı; diğer hedefler tablo metriklerine güvenilir.",
+                            "§4.5: `clf_beat_*` ve `clf_direction_*` sütunları LDA/QDA/NB özetini ekler.",
+                            "Detay fold grafikleri `viz_target` / `viz_horizon` üzerinden okunmalı.",
                         ],
                     )
                 )
@@ -1354,6 +1526,8 @@ def main():
                 for k, v in corr_bundles.items()
                 if isinstance(v.get("corr"), pd.DataFrame) and not v["corr"].empty
             }
+            _clf_beat_x = tab_clf_beat if "tab_clf_beat" in dir() else None
+            _clf_dir_x = tab_clf_direction if "tab_clf_direction" in dir() else None
             export_excel(
                 xlsx_path,
                 adj,
@@ -1362,13 +1536,22 @@ def main():
                 corr_by_window=corr_sheets,
                 predictions=predictions_all,
                 pred_rmse_by_ticker=pred_rmse_by_ticker,
+                clf_beat_summary=_clf_beat_x,
+                clf_direction_summary=_clf_dir_x,
             )
             print("Yazıldı:", xlsx_path)
 
             bullets = [
                 ("Veri ve hedef", ["yfinance panel", "7 işgünü horizon", "Özellikler giriş öncesi"]),
                 ("Korelasyon", ["1–24 ay takvim pencereleri", "Isı haritası + 1y/2y clustermap", "NVDA–INTC rolling"]),
-                ("Modeller", ["Linear: FS + Ridge/Lasso/ENet", "XGB vs LGBM RandomizedSearch"]),
+                (
+                    "Modeller",
+                    [
+                        "Linear: FS + Ridge/Lasso/ENet",
+                        "LDA / QDA / Gaussian NB (zaman serisi CV, ROC-AUC)",
+                        "XGB vs LGBM RandomizedSearch",
+                    ],
+                ),
                 ("Sonuç", ["Hedef bazında FS+reg seçimi", "viz_target grafikleri", "GBM + multi özet"]),
             ]
             pred_lines = [
@@ -1435,6 +1618,7 @@ def main():
             - [x] Feature importance (permutation + SHAP denemesi)
             - [x] Hyperparameter tuning tabloları (RandomizedSearch sonuç nesnesi `rx`/`rl`)
             - [x] Regularization karşılaştırması
+            - [x] LDA / QDA / Naive Bayes (zaman serisi CV, ROC-AUC)
             - [x] Horizon / hedef bazında model seçimi ve özet tablo
             - [x] Stock comparison (single/multi/sector)
             - [x] Tahmin tablosu (tüm hisseler × hedefler) + Excel + PPTX özeti
