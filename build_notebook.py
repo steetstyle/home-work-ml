@@ -84,20 +84,28 @@ def main():
                 slice_returns_calendar_tail,
                 target_columns,
             )
+            from IPython.display import Markdown, display
+
             from odev_modeling import (
                 add_sector_peer_returns,
                 add_ticker_dummies,
                 correlation_prune_cv,
                 cv_eval,
+                cv_fold_sizes,
+                format_sonuc,
                 grid_regularized,
                 linear_baseline_cv,
                 materialize_fs_matrix,
                 numeric_pipeline,
+                pick_viz_target,
+                plot_all_cv_folds,
                 prepare_xy_with_meta,
                 randomized_lgbm,
                 randomized_xgb,
                 rfe_cv,
                 select_k_best_cv,
+                teach_cv_compare,
+                gbm_permutation_importance,
                 time_series_cv,
                 prepare_xy,
             )
@@ -122,6 +130,49 @@ def main():
             print("earnings cache:", EARNINGS_CACHE_CSV)
             print("events", events.shape, "adj", adj.shape)
             events.head()
+            """
+        )
+    )
+
+    cells.append(
+        code(
+            """
+            ev_chrono = events.sort_values("entry_date")
+            tab_veri = pd.DataFrame(
+                [
+                    {
+                        "n_olay": len(events),
+                        "n_ticker": events["ticker"].nunique(),
+                        "tarih_min": ev_chrono["entry_date"].min(),
+                        "tarih_max": ev_chrono["entry_date"].max(),
+                    }
+                ]
+            )
+            display(tab_veri)
+            ev_chrono.groupby(ev_chrono["entry_date"].dt.to_period("M")).size().plot(
+                kind="bar", figsize=(10, 3), title="Aylık olay sayısı (entry_date)"
+            )
+            plt.tight_layout()
+            plt.show()
+            _demo_tgt = [c for c in target_columns() if c in events.columns][0]
+            y_raw = events[_demo_tgt].values
+            y_sorted = ev_chrono[_demo_tgt].values
+            fig, axes = plt.subplots(1, 2, figsize=(10, 3))
+            axes[0].plot(y_raw, ".", alpha=0.5, markersize=3)
+            axes[0].set_title(f"Sıra: ticker→tarih ({_demo_tgt})")
+            axes[1].plot(y_sorted, ".", alpha=0.5, markersize=3)
+            axes[1].set_title(f"Sıra: entry_date ({_demo_tgt})")
+            plt.tight_layout()
+            plt.show()
+            sonuc_1 = format_sonuc(
+                "1 Veri",
+                [
+                    f"Toplam {len(events)} olay, {events['ticker'].nunique()} ticker; tarih {tab_veri['tarih_min'].iloc[0]} – {tab_veri['tarih_max'].iloc[0]}.",
+                    "Zaman serisi CV için satırlar **entry_date** ile sıralanmalı (sağ grafik); ticker gruplu sıra CV fold’larını bozar.",
+                    "Olay sayısı çok düşükse fold başına test örneği azalır — sonraki CV std yüksek olabilir.",
+                ],
+            )
+            display(Markdown(sonuc_1))
             """
         )
     )
@@ -213,6 +264,45 @@ def main():
                 ax.legend(loc="best", fontsize=8)
                 plt.tight_layout()
                 plt.show()
+
+            corr_density = []
+            for k in ("1m", "1y"):
+                meta = corr_bundles.get(k)
+                if not meta or meta["corr"].empty:
+                    continue
+                c = meta["corr"].values.copy()
+                np.fill_diagonal(c, np.nan)
+                corr_density.append(
+                    {
+                        "pencere": CORR_WINDOW_TITLE_TR.get(k, k),
+                        "mean_abs_corr": float(np.nanmean(np.abs(c))),
+                    }
+                )
+            tab_corr_cmp = pd.DataFrame(corr_density)
+            display(tab_corr_cmp)
+            if len(tab_corr_cmp) >= 2:
+                tab_corr_cmp.set_index("pencere")["mean_abs_corr"].plot.bar(
+                    figsize=(5, 3), title="Ortalama |ρ| (köşegen hariç)"
+                )
+                plt.tight_layout()
+                plt.show()
+            _win_best = (
+                tab_corr_cmp.loc[tab_corr_cmp["mean_abs_corr"].idxmax(), "pencere"]
+                if len(tab_corr_cmp)
+                else "—"
+            )
+            display(
+                Markdown(
+                    format_sonuc(
+                        "2 Korelasyon",
+                        [
+                            f"Kısa vs uzun pencere: daha yüksek ortalama |ρ| → **{_win_best}** (yoğun ortak hareket).",
+                            "Isı haritası ve küme yapısı, sektör/piyasa özelliklerinin modele anlamlı olabileceğini gösterir.",
+                            "Sonraki CV’de bu ortak yapı pooled modelde tek zaman ekseninde test edilecek.",
+                        ],
+                    )
+                )
+            )
             """
         )
     )
@@ -258,6 +348,38 @@ def main():
                 plt.title(f"Hedef {tcol}")
                 plt.tight_layout()
                 plt.show()
+
+            tgt_stats = []
+            for tcol in target_columns():
+                s = events[tcol].dropna()
+                if s.empty:
+                    continue
+                tgt_stats.append(
+                    {
+                        "hedef": tcol,
+                        "std": float(s.std()),
+                        "skew": float(s.skew()),
+                    }
+                )
+            tab_tgt = pd.DataFrame(tgt_stats)
+            display(tab_tgt)
+            if not tab_tgt.empty:
+                short_h = [c for c in tab_tgt["hedef"] if "1d" in c or "3d" in c]
+                long_h = [c for c in tab_tgt["hedef"] if "63" in c or "21" in c]
+                std_short = tab_tgt.loc[tab_tgt["hedef"].isin(short_h), "std"].mean()
+                std_long = tab_tgt.loc[tab_tgt["hedef"].isin(long_h), "std"].mean()
+                display(
+                    Markdown(
+                        format_sonuc(
+                            "3 Özellikler",
+                            [
+                                f"Kısa horizon ort. std ≈ {std_short:.4f}; uzun horizon ort. std ≈ {std_long:.4f} (yüksek → daha gürültülü hedef).",
+                                "Çarpık dağılımlarda RMSE aykırılara duyarlı; ağaç modelleri §5’te denenecek.",
+                                f"Özellik sayısı: {len(feats)} — FS ve düzenlileştirme §4’te CV ile seçilecek.",
+                            ],
+                        )
+                    )
+                )
             """
         )
     )
@@ -287,7 +409,8 @@ def main():
             - **Nasıl okunur:** **Düşük RMSE = daha iyi**. Büyük aykırı hatalara duyarlıdır (hata karesi olduğu için tek bir çok kötü tahmin RMSE’yi şişirir).
 
             ### CV (Cross-Validation) ve `cv_rmse_mean` / `cv_rmse_std`
-            - **Ne:** Veriyi zamana göre dilimleyip (burada `TimeSeriesSplit`) modeli birkaç kez “geçmişe eğit, bir sonraki dilime skorla” tekrarlamak.
+            - **Ne:** Veriyi **entry_date** sırasına göre bloklara ayırıp (`TimeSeriesBlockCV`, [makale](https://emad-ezzeldin4.medium.com/introduction-to-time-series-cross-validation-mastering-predictive-accuracy-in-sequential-data-139710a07915)) modeli “geçmişe eğit, sonraki dilime skorla” tekrarlamak.
+            - **gap / offset:** `gap` eğitim–test arasında boşluk; `offset` ilk test fold’undan önce minimum geçmiş uzunluğu.
             - **`cv_rmse_mean`:** Fold’larda elde edilen RMSE’lerin ortalaması — **genel performans** özeti.
             - **`cv_rmse_std`:** Fold’lar arası dalgalanma; **yüksek** ise model veya veri fold’a duyarlı, güven aralığı geniş demektir.
             - **Neden gerekli:** Tek bir train/test bölmesi şansa bağlıdır; CV daha stabil kıyas verir.
@@ -331,11 +454,77 @@ def main():
         )
     )
 
+    cells.append(md("## 3.5 Zaman serisi CV — öğrenme yolu"))
+    cells.append(
+        code(
+            """
+            _cv_demo_tgt = [c for c in target_columns() if c in events.columns][0]
+            X_cv, y_cv, _ = prepare_xy(events, _cv_demo_tgt, feats)
+            x_cv = np.arange(len(y_cv))
+            pipe_cv = numeric_pipeline(Ridge(alpha=1.0))
+
+            cv_base = time_series_cv(5, gap=0, offset=0)
+            display(cv_fold_sizes(cv_base, len(y_cv)))
+            plot_all_cv_folds(X_cv, y_cv, pipe_cv, cv_base, x_series=x_cv)
+            tab_nogap = teach_cv_compare([("Ridge (gap=0)", pipe_cv)], X_cv, y_cv, cv_base)
+            display(tab_nogap)
+
+            cv_gap = time_series_cv(5, gap=1, offset=0)
+            tab_gap0 = teach_cv_compare([("gap=0", pipe_cv)], X_cv, y_cv, cv_base)
+            tab_gap1 = teach_cv_compare([("gap=1", pipe_cv)], X_cv, y_cv, cv_gap)
+            tab_gap = pd.concat([tab_gap0, tab_gap1], ignore_index=True)
+            display(tab_gap)
+
+            lag_cols = [c for c in feats if "lag" in c or "prior_post" in c or "surprise_lag" in c]
+            feats_nolag = [c for c in feats if c not in lag_cols]
+            X_nolag, y_nl, _ = prepare_xy(events, _cv_demo_tgt, feats_nolag)
+            X_lag, y_lg, _ = prepare_xy(events, _cv_demo_tgt, feats)
+            tab_lag = teach_cv_compare(
+                [
+                    ("lagsiz", pipe_cv),
+                    ("gecikmeli özellikler", pipe_cv),
+                ],
+                X_nolag,
+                y_nl,
+                cv_base,
+            )
+            tab_lag2 = teach_cv_compare([("gecikmeli", pipe_cv)], X_lag, y_lg, cv_base)
+            display(pd.concat([tab_lag, tab_lag2], ignore_index=True))
+
+            off = max(10, len(y_cv) // 10)
+            cv_off = time_series_cv(5, gap=0, offset=off)
+            display(cv_fold_sizes(cv_off, len(y_cv)))
+            plot_all_cv_folds(X_cv, y_cv, pipe_cv, cv_off, x_series=x_cv)
+
+            cv = time_series_cv(5, gap=0, offset=0)
+            _g0 = tab_gap0["cv_rmse_mean"].iloc[0] if len(tab_gap0) else np.nan
+            _g1 = tab_gap1["cv_rmse_mean"].iloc[0] if len(tab_gap1) else np.nan
+            _use_gap = 1 if np.isfinite(_g0) and np.isfinite(_g1) and _g1 <= _g0 else 0
+            if _use_gap:
+                cv = time_series_cv(5, gap=1, offset=0)
+            display(
+                Markdown(
+                    format_sonuc(
+                        "3.5 Zaman serisi CV",
+                        [
+                            f"Demo hedef: `{_cv_demo_tgt}`; üretim CV: n_splits=5, gap={cv.gap}, offset={cv.offset}.",
+                            "Fold grafikleri: mavi=eğitim, yeşil=test, kırmızı=tahmin; boş eğitim fold’u atlanır.",
+                            "Gecikmeli kazanç özellikleri (`surprise_lag`, `prior_post_*`) tabloda CV RMSE ile kıyaslandı.",
+                            "§4–§8 tüm modeller bu CV nesnesini kullanır; satırlar `prepare_xy` ile entry_date sıralı.",
+                        ],
+                    )
+                )
+            )
+            """
+        )
+    )
+
     cells.append(md("## 4. Linear pipeline — her hedef için en iyi FS + reg"))
     cells.append(
         code(
             """
-            cv = time_series_cv(5)
+            if "cv" not in dir():
+                cv = time_series_cv(5, gap=0, offset=0)
             per_target = {}
 
 
@@ -403,8 +592,9 @@ def main():
             )
             display(summary_linear)
 
-            viz_target = min(per_target, key=lambda t: per_target[t]["cv_best_lin"])
-            print("Görselleştirme (path / learning / residual / SHAP):", viz_target)
+            REG_KEY = {"Ridge": "res_ridge", "Lasso": "res_lasso", "ElasticNet": "res_enet"}
+            viz_target = pick_viz_target(per_target, fallback=next(iter(per_target), None))
+            print("Görselleştirme (viz_target):", viz_target)
             best_X = per_target[viz_target]["X"]
             y_all = per_target[viz_target]["y"]
             res_ridge = per_target[viz_target]["res_ridge"]
@@ -464,6 +654,58 @@ def main():
             plt.legend()
             plt.tight_layout()
             plt.show()
+
+            tab_viz_fs = per_target[viz_target]["tab_fs"]
+            tab_viz_fs.set_index("yöntem")["cv_rmse_mean"].plot.bar(
+                figsize=(7, 3), title=f"FS karşılaştırma — {viz_target}"
+            )
+            plt.ylabel("CV RMSE")
+            plt.tight_layout()
+            plt.show()
+            top2 = tab_viz_fs.nsmallest(2, "cv_rmse_mean")["yöntem"].tolist()
+            for fs_name in top2[:2]:
+                Xm = materialize_fs_matrix(
+                    fs_name, per_target[viz_target]["X"], per_target[viz_target]["y"], per_target[viz_target]["bundles"]
+                )
+                plot_all_cv_folds(
+                    Xm,
+                    per_target[viz_target]["y"],
+                    per_target[viz_target]["bundles"][fs_name]["model"],
+                    cv,
+                    x_series=np.arange(len(per_target[viz_target]["y"])),
+                )
+            display(
+                Markdown(
+                    format_sonuc(
+                        "4a Özellik seçimi",
+                        [
+                            f"`viz_target` = {viz_target}; her hedef için en düşük CV RMSE’li FS `summary_linear.best_fs` sütununda.",
+                            f"Örnek hedefte en iyi iki FS: {', '.join(top2)}.",
+                            "Fold grafikleri yalnızca örnek hedef için gösterildi; diğer hedefler tabloda.",
+                        ],
+                    )
+                )
+            )
+            _win_reg = per_target[viz_target]["best_reg"]
+            plot_all_cv_folds(
+                best_X,
+                y_all,
+                per_target[viz_target][REG_KEY[_win_reg]]["model"],
+                cv,
+                x_series=np.arange(len(y_all)),
+            )
+            display(
+                Markdown(
+                    format_sonuc(
+                        "4b Düzenlileştirme",
+                        [
+                            f"Örnek hedef `{viz_target}`: en iyi reg **{_win_reg}** (Ridge/Lasso/ENet CV RMSE minimumu).",
+                            f"Ridge kazanan hedef: {int((ridge_lasso_kiyaslama['kazanan'] == 'Ridge').sum())}; Lasso: {int((ridge_lasso_kiyaslama['kazanan'] == 'Lasso').sum())}.",
+                            "Üstteki fold grafiği seçilen FS+reg pipeline ile zaman içi test tahminlerini gösterir.",
+                        ],
+                    )
+                )
+            )
             """
         )
     )
@@ -546,6 +788,7 @@ def main():
     cells.append(
         code(
             """
+            _lc_gap = np.nan
             for _lc_name, _lc_model in (
                 ("Ridge", res_ridge["model"]),
                 ("Lasso", res_lasso["model"]),
@@ -562,6 +805,8 @@ def main():
                 )
                 train_rmse = -train_scores
                 test_rmse = -test_scores
+                if _lc_name == "Ridge":
+                    _lc_gap = float(test_rmse.mean(axis=1)[-1] - train_rmse.mean(axis=1)[-1])
                 plt.figure(figsize=(8, 4))
                 plt.plot(train_sizes, train_rmse.mean(axis=1), label="train")
                 plt.plot(train_sizes, test_rmse.mean(axis=1), label="cv")
@@ -603,6 +848,20 @@ def main():
             plt.ylabel("residual")
             plt.title(f"Residual plot — örnek hedef: {viz_target}")
             plt.show()
+
+            _lc_gap = float(test_rmse.mean(axis=1)[-1] - train_rmse.mean(axis=1)[-1])
+            display(
+                Markdown(
+                    format_sonuc(
+                        "4c Tanı grafikleri",
+                        [
+                            f"Learning curve: son eğitim boyutunda train–CV RMSE farkı ≈ {_lc_gap:.4f} ({viz_target}, Ridge gösterimi).",
+                            "Fark büyükse overfit eğilimi; eğriler yakınsıyorsa ek veri sınırlı kazanç sağlar.",
+                            "Residual grafiği sistematik eğri/fan göstermiyorsa yanlılık zayıf; aksi halde özellik/model revizyonu düşünülür.",
+                        ],
+                    )
+                )
+            )
             """
         )
     )
@@ -677,6 +936,31 @@ def main():
                     ]
                 )
             )
+            if rx and rl:
+                teach_cv_compare(
+                    [("XGB", rx["model"]), ("LGBM", rl["model"])],
+                    best_X,
+                    y_all,
+                    cv,
+                    plot=True,
+                    x_series=np.arange(len(y_all)),
+                )
+            _xgb_w = int((tab_gbm["tree_winner"] == "XGB").sum())
+            _lgb_w = int((tab_gbm["tree_winner"] == "LGBM").sum())
+            _vt_lin = per_target[viz_target]["cv_best_lin"]
+            _vt_tree = per_target[viz_target].get("cv_tree_best", np.nan)
+            display(
+                Markdown(
+                    format_sonuc(
+                        "5 XGB / LGBM",
+                        [
+                            f"XGB kazanan hedef: {_xgb_w}; LGBM: {_lgb_w} (CV RMSE tablosu).",
+                            f"`{viz_target}`: linear CV RMSE={_vt_lin:.4f}, en iyi ağaç={_vt_tree:.4f}.",
+                            "Fold grafiği örnek hedefte iki arama sonrası pipeline ile gösterildi.",
+                        ],
+                    )
+                )
+            )
             """
         )
     )
@@ -704,30 +988,22 @@ def main():
     cells.append(
         code(
             """
-            from sklearn.inspection import permutation_importance
-
             if rx:
-                rx["model"].fit(best_X, y_all)
-                pi = permutation_importance(
-                    rx["model"],
-                    best_X,
-                    y_all,
-                    scoring="neg_root_mean_squared_error",
-                    n_repeats=10,
-                    random_state=0,
-                    n_jobs=1,
+                imp, pi_note = gbm_permutation_importance(
+                    rx["model"], best_X, y_all, n_repeats=10, random_state=0, top_n=15
                 )
-                imp = (
-                    pd.Series(pi.importances_mean, index=best_X.columns)
-                    .sort_values(ascending=False)
-                    .head(15)
-                )
+                if pi_note:
+                    print(pi_note)
                 display(imp.to_frame("perm_importance"))
-                imp.sort_values().plot.barh(
-                    figsize=(8, 6),
-                    title=f"Permutation importance (XGB) — {viz_target}",
-                )
-                plt.show()
+                if imp.max() > 0:
+                    imp.sort_values().plot.barh(
+                        figsize=(8, 6),
+                        title=f"Permutation importance (XGB) — {viz_target}",
+                    )
+                    plt.tight_layout()
+                    plt.show()
+                else:
+                    print("Permutation importance hâlâ sıfır; özellikler hedefle zayıf ilişkili olabilir.")
             """
         )
     )
@@ -856,6 +1132,27 @@ def main():
                     index="hedef", columns="mode", values="cv_rmse_mean", aggfunc="first"
                 )
                 display(pv.assign(best_mode=pv.idxmin(axis=1)))
+            if not tab_multi.empty and viz_target in tab_multi["hedef"].values:
+                sub_m = tab_multi[tab_multi["hedef"] == viz_target]
+                sub_m.set_index("mode")["cv_rmse_mean"].plot.bar(
+                    figsize=(8, 3), title=f"Havuzlama modları — {viz_target}"
+                )
+                plt.ylabel("CV RMSE")
+                plt.tight_layout()
+                plt.show()
+                _bm = sub_m.loc[sub_m["cv_rmse_mean"].idxmin(), "mode"]
+                display(
+                    Markdown(
+                        format_sonuc(
+                            "6 Havuzlama",
+                            [
+                                f"Örnek hedef `{viz_target}`: en düşük CV RMSE modu **{_bm}**.",
+                                "Pivot `best_mode` sütunu her hedef için aynı seçimi özetler.",
+                                "Per-ticker ortalama CV, hisse başına ayrı model stratejisinin havuzla kıyasını verir.",
+                            ],
+                        )
+                    )
+                )
             """
         )
     )
@@ -900,7 +1197,33 @@ def main():
                 bm = pv.idxmin(axis=1).rename("best_multi_mode").reset_index()
                 bm.columns = ["hedef", "best_multi_mode"]
                 summary_all = summary_all.merge(bm, on="hedef", how="left")
+            summary_all["overall_pick"] = summary_all.apply(
+                lambda r: (
+                    r["best_reg"]
+                    if np.isfinite(r.get("cv_tree_best", np.nan))
+                    and r["cv_rmse_linear"] <= r["cv_tree_best"]
+                    else (r.get("tree_winner") or r["best_reg"])
+                ),
+                axis=1,
+            )
             display(summary_all)
+            for _, row in summary_all.iterrows():
+                print(
+                    f"- {row['hedef']}: FS={row['best_fs']}, linear={row['best_reg']}, "
+                    f"ağaç={row.get('tree_winner', '—')}, özet={row['overall_pick']}"
+                )
+            display(
+                Markdown(
+                    format_sonuc(
+                        "7 Özet",
+                        [
+                            "Yukarıdaki tablo ve madde listesi tüm hedefler için §4–§6 seçimlerini birleştirir.",
+                            "`overall_pick`: linear CV RMSE ağaçtan düşükse linear reg, değilse `tree_winner`.",
+                            "Detay fold grafikleri `viz_target` üzerinden okunmalı; diğer hedefler tablo metriklerine güvenilir.",
+                        ],
+                    )
+                )
+            )
             """
         )
     )
@@ -979,6 +1302,32 @@ def main():
             print("predictions_all:", predictions_all.shape)
             display(predictions_all.head(25))
             display(pred_rmse_by_ticker.sort_values("rmse_linear").head(25))
+
+            if viz_target in per_target:
+                Xh, yh, _ = prepare_xy(events, viz_target, feats)
+                Xhm = materialize_fs_matrix(
+                    per_target[viz_target]["best_fs"],
+                    Xh,
+                    yh,
+                    per_target[viz_target]["bundles"],
+                )
+                sp = int(len(Xhm) * 0.8)
+                m_h = per_target[viz_target][REG_KEY[per_target[viz_target]["best_reg"]]]["model"]
+                m_h.fit(Xhm.iloc[:sp], yh[:sp])
+                hold_rmse = _rmse_vec(yh[sp:], m_h.predict(Xhm.iloc[sp:]))
+                cv_rm = per_target[viz_target]["cv_best_lin"]
+                display(
+                    Markdown(
+                        format_sonuc(
+                            "8 Tahminler",
+                            [
+                                f"`{viz_target}` son %20 zaman holdout RMSE≈{hold_rmse:.4f}; CV linear RMSE≈{cv_rm:.4f}.",
+                                "Holdout ile CV yakınsa genelleme tutarlı; fark büyükse fold/veri rejimi farklı olabilir.",
+                                "`predictions_all` in-sample tahminlerdir; rapor için CV tabloları esas alınmalıdır.",
+                            ],
+                        )
+                    )
+                )
             """
         )
     )
@@ -1044,6 +1393,18 @@ def main():
                 bullets=bullets,
             )
             print("Yazıldı:", pptx_path)
+            display(
+                Markdown(
+                    format_sonuc(
+                        "9 Teslim",
+                        [
+                            f"Excel: `{xlsx_path}` — olay paneli, tahminler, korelasyon sayfaları.",
+                            f"Sunum: `{pptx_path}` — not defterindeki Sonuç maddeleriyle uyumlu özet.",
+                            "Tüm model seçimleri zaman serisi CV (blok fold) ile yapıldı; teslim öncesi hücreleri baştan çalıştırın.",
+                        ],
+                    )
+                )
+            )
             """
         )
     )
