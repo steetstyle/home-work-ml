@@ -110,6 +110,7 @@ def main():
                 EARNINGS_CACHE_CSV,
                 RAW_PRICES_LONG_CSV,
                 assemble_dataset,
+                configure_plot_style,
                 correlation_bundles_by_calendar_windows,
                 drop_high_corr_columns,
                 feature_columns,
@@ -155,7 +156,7 @@ def main():
             from odev_export import export_excel, export_presentation
 
             sns.set_theme(style="whitegrid", context="talk")
-            plt.rcParams["figure.figsize"] = (10, 5)
+            configure_plot_style(dpi=200, savefig_dpi=400, retina=True)
             """
         )
     )
@@ -200,14 +201,14 @@ def main():
             )
             display(tab_veri)
             ev_chrono.groupby(ev_chrono["entry_date"].dt.to_period("M")).size().plot(
-                kind="bar", figsize=(10, 3), title="Aylık olay sayısı (entry_date)"
+                kind="bar", figsize=(12, 4), title="Aylık olay sayısı (entry_date)"
             )
             plt.tight_layout()
             plt.show()
             _demo_tgt = [c for c in target_columns() if c in events.columns][0]
             y_raw = events[_demo_tgt].values
             y_sorted = ev_chrono[_demo_tgt].values
-            fig, axes = plt.subplots(1, 2, figsize=(10, 3))
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4), dpi=200)
             axes[0].plot(y_raw, ".", alpha=0.5, markersize=3)
             axes[0].set_title(f"Sıra: ticker→tarih ({_demo_tgt})")
             axes[1].plot(y_sorted, ".", alpha=0.5, markersize=3)
@@ -281,7 +282,7 @@ def main():
                 if cmat.empty or cmat.shape[0] < 2:
                     print(ttl, "→ yeterli gözlem yok, ısı haritası atlandı")
                     continue
-                fig, ax = plt.subplots(figsize=(12, 10))
+                fig, ax = plt.subplots(figsize=(14, 11), dpi=200)
                 sns.heatmap(cmat, ax=ax, cmap="vlag", center=0, square=True)
                 ax.set_title(f"Getiri korelasyon — {ttl}")
                 plt.tight_layout()
@@ -292,7 +293,7 @@ def main():
                 if not meta or meta["corr"].empty or meta["corr"].shape[0] < 2:
                     continue
                 g = sns.clustermap(
-                    meta["corr"], cmap="vlag", center=0, figsize=(12, 12)
+                    meta["corr"], cmap="vlag", center=0, figsize=(14, 14)
                 )
                 g.fig.suptitle(
                     f"Clustermap — {CORR_WINDOW_TITLE_TR.get(k, k)}", y=1.02
@@ -300,7 +301,7 @@ def main():
                 plt.show()
 
             if "NVDA" in ret_w.columns and "INTC" in ret_w.columns:
-                plt.figure(figsize=(11, 5))
+                plt.figure(figsize=(13, 6), dpi=200)
                 ax = plt.gca()
                 for k, meta in corr_bundles.items():
                     sub = slice_returns_calendar_tail(ret_w, meta["months"])
@@ -333,7 +334,7 @@ def main():
             display(tab_corr_cmp)
             if len(tab_corr_cmp) >= 2:
                 tab_corr_cmp.set_index("pencere")["mean_abs_corr"].plot.bar(
-                    figsize=(5, 3), title="Ortalama |ρ| (köşegen hariç)"
+                    figsize=(8, 4), title="Ortalama |ρ| (köşegen hariç)"
                 )
                 plt.tight_layout()
                 plt.show()
@@ -392,7 +393,7 @@ def main():
             print("Özellik sayısı:", len(feats))
 
             for tcol in target_columns():
-                plt.figure(figsize=(4, 3))
+                plt.figure(figsize=(7, 4.5), dpi=200)
                 events[tcol].dropna().hist(bins=40)
                 plt.title(f"Hedef {tcol}")
                 plt.tight_layout()
@@ -413,8 +414,8 @@ def main():
             tab_tgt = pd.DataFrame(tgt_stats)
             display(tab_tgt)
             if not tab_tgt.empty:
-                short_h = [c for c in tab_tgt["hedef"] if "1d" in c or "3d" in c]
-                long_h = [c for c in tab_tgt["hedef"] if "63" in c or "21" in c]
+                short_h = [c for c in tab_tgt["hedef"] if c in ("y_1d", "y_3d")]
+                long_h = [c for c in tab_tgt["hedef"] if c in ("y_1m", "y_3m")]
                 std_short = tab_tgt.loc[tab_tgt["hedef"].isin(short_h), "std"].mean()
                 std_long = tab_tgt.loc[tab_tgt["hedef"].isin(long_h), "std"].mean()
                 display(
@@ -515,7 +516,7 @@ def main():
                         "3.5 Zaman serisi CV",
                         [
                             f"Artık ortak kural net: `cv` = n_splits=5, gap={cv.gap}, offset={cv.offset} (demo: `{_cv_demo_tgt}`).",
-                            "Fold grafiği okuma: mavi=eğitim, yeşil=test, kırmızı=tahmin — geleceği eğitimde kullanmıyoruz.",
+                            "Fold grafiği: sol eksen gerçek getiri (mavi=eğitim, yeşil=test); sağ eksen kırmızı=test tahmini (ayrı ölçek).",
                             "§4’te regresyon ve RMSE ile devam; aynı CV nesnesi değişmeden kalacak.",
                         ],
                     )
@@ -664,7 +665,7 @@ def main():
                 int((ridge_lasso_kiyaslama["kazanan"] == "Lasso").sum()),
             )
 
-            plt.figure(figsize=(10, 5))
+            plt.figure(figsize=(12, 6), dpi=200)
             x = np.arange(len(ridge_lasso_kiyaslama))
             w = 0.35
             rl_df = ridge_lasso_kiyaslama.sort_values("hedef").reset_index(drop=True)
@@ -679,7 +680,7 @@ def main():
 
             tab_viz_fs = per_target[viz_target]["tab_fs"]
             tab_viz_fs.set_index("yöntem")["cv_rmse_mean"].plot.bar(
-                figsize=(7, 3), title=f"FS karşılaştırma — {viz_target}"
+                figsize=(10, 4), title=f"FS karşılaştırma — {viz_target}"
             )
             plt.ylabel("CV RMSE")
             plt.tight_layout()
@@ -746,6 +747,7 @@ def main():
 
             - **`summary_linear`:** Seçilen FS + `best_reg` + `cv_rmse_linear`; rapor cümlesi buradan kurulur.
             - **`ridge_lasso_kiyaslama`:** Aynı FS üzerinde Ridge vs Lasso; `kazanan` sütunu hızlı okuma.
+            - **CV fold grafiği:** Sol = gerçek getiri; sağ (kırmızı) = test tahmini — tahmin sıfıra yakın görünse bile sağ eksende ölçeği kontrol edin.
 
             #### Kavram: Ridge, Lasso, ElasticNet
             - **Ridge:** L2 cezası — katsayıları küçültür, çoklu doğrusal bağlantıda stabil.
@@ -831,7 +833,7 @@ def main():
                 test_rmse = -test_scores
                 if _lc_name == "Ridge":
                     _lc_gap = float(test_rmse.mean(axis=1)[-1] - train_rmse.mean(axis=1)[-1])
-                plt.figure(figsize=(8, 4))
+                plt.figure(figsize=(11, 5), dpi=200)
                 plt.plot(train_sizes, train_rmse.mean(axis=1), label="train")
                 plt.plot(train_sizes, test_rmse.mean(axis=1), label="cv")
                 plt.legend()
@@ -928,7 +930,7 @@ def main():
             tab_balance["oran"] = tab_balance["adet"] / tab_balance["adet"].sum()
             display(tab_balance)
             tab_balance.set_index("sinif")["adet"].plot.bar(
-                figsize=(4, 3), title="eps_beat sınıf dengesi"
+                figsize=(7, 4.5), title="eps_beat sınıf dengesi"
             )
             plt.ylabel("adet")
             plt.tight_layout()
@@ -938,7 +940,7 @@ def main():
             tab_clf_beat = teach_cv_compare_classify(specs_beat, X_beat, y_beat, cv)
             display(tab_clf_beat)
             tab_clf_beat.set_index("yöntem")["cv_score_mean"].plot.bar(
-                figsize=(5, 3), title="ROC-AUC (CV) — eps_beat"
+                figsize=(8, 4.5), title="ROC-AUC (CV) — eps_beat"
             )
             plt.ylabel("ROC-AUC")
             plt.tight_layout()
@@ -998,7 +1000,7 @@ def main():
                 clf_dir_winner = str(pv_auc.loc[viz_horizon].idxmax())
                 clf_dir_auc = float(pv_auc.loc[viz_horizon].max())
                 pv_auc.max(axis=1).plot.bar(
-                    figsize=(8, 3), title="En iyi model ROC-AUC (horizon başına)"
+                    figsize=(11, 4.5), title="En iyi model ROC-AUC (horizon başına)"
                 )
                 plt.ylabel("max ROC-AUC")
                 plt.tight_layout()
@@ -1179,7 +1181,7 @@ def main():
                 display(imp.to_frame("perm_importance"))
                 if imp.max() > 0:
                     imp.sort_values().plot.barh(
-                        figsize=(8, 6),
+                        figsize=(10, 7),
                         title=f"Permutation importance (XGB) — {viz_target}",
                     )
                     plt.tight_layout()
@@ -1213,7 +1215,9 @@ def main():
                     Xs = best_X.sample(min(400, len(best_X)), random_state=0)
                     explainer = shap.TreeExplainer(est)
                     sv = explainer.shap_values(Xs)
-                    shap.summary_plot(sv, Xs, show=True, max_display=12)
+                    shap.summary_plot(
+                        sv, Xs, show=True, max_display=12, plot_size=(16.0, 9.0)
+                    )
             except Exception as e:
                 print("SHAP atlandı:", e)
             """
@@ -1338,7 +1342,7 @@ def main():
             if not tab_multi.empty and viz_target in tab_multi["hedef"].values:
                 sub_m = tab_multi[tab_multi["hedef"] == viz_target]
                 sub_m.set_index("mode")["cv_rmse_mean"].plot.bar(
-                    figsize=(8, 3), title=f"Havuzlama modları — {viz_target}"
+                    figsize=(11, 4.5), title=f"Havuzlama modları — {viz_target}"
                 )
                 plt.ylabel("CV RMSE")
                 plt.tight_layout()

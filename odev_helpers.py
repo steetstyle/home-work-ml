@@ -15,6 +15,39 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+
+def configure_plot_style(*, dpi: int = 200, savefig_dpi: int = 400, retina: bool = True) -> None:
+    """Notebook grafikleri: yüksek DPI, retina (Jupyter), biraz daha kalın çizgi/işaret."""
+    import matplotlib as mpl
+
+    mpl.rcParams.update(
+        {
+            "figure.dpi": dpi,
+            "savefig.dpi": savefig_dpi,
+            "figure.figsize": (12, 6),
+            "lines.linewidth": 1.75,
+            "lines.markersize": 6,
+            "patch.linewidth": 0.8,
+            "axes.linewidth": 1.1,
+            "grid.linewidth": 0.9,
+            "xtick.major.width": 1.0,
+            "ytick.major.width": 1.0,
+            "font.size": 11,
+            "axes.titlesize": 13,
+            "axes.labelsize": 12,
+            "legend.fontsize": 11,
+            "figure.autolayout": False,
+        }
+    )
+    if retina:
+        try:
+            from matplotlib_inline import backend_inline
+
+            backend_inline.set_matplotlib_formats("retina", "png")
+        except Exception:
+            pass
+
+
 # Varsayılan evren (tickers.csv yoksa kullanılır ve dosya oluşturulur)
 TICKERS_CSV = Path(__file__).resolve().parent / "tickers.csv"
 # Ham günlük panel (Adj Close + Volume); varsa yfinance tekrar çağrılmaz

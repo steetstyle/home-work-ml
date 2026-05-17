@@ -349,6 +349,33 @@ def pick_viz_target(
     return fallback or next(iter(per_target.keys()), None)
 
 
+def _focus_pred_axis(ax2, y_pred: np.ndarray) -> None:
+    """Sağ ekseni yalnızca tahmin aralığına zoomla; küçük değerler okunaklı olsun."""
+    from matplotlib.ticker import FormatStrFormatter, MaxNLocator
+
+    p = np.asarray(y_pred, dtype=float)
+    m = np.isfinite(p)
+    if not m.any():
+        return
+    lo, hi = float(np.min(p[m])), float(np.max(p[m]))
+    if lo == hi:
+        pad = max(5e-4, abs(lo) * 0.35 + 1e-4)
+        lo, hi = lo - pad, hi + pad
+    else:
+        pad = (hi - lo) * 0.18 + 1e-6
+        lo, hi = lo - pad, hi + pad
+    ax2.set_ylim(lo, hi)
+    ax2.yaxis.set_major_locator(MaxNLocator(nbins=7, min_n_ticks=4))
+    span = hi - lo
+    if span < 0.02:
+        ax2.yaxis.set_major_formatter(FormatStrFormatter("%.5f"))
+    elif span < 0.08:
+        ax2.yaxis.set_major_formatter(FormatStrFormatter("%.4f"))
+    else:
+        ax2.yaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+    ax2.grid(True, axis="y", linestyle=":", alpha=0.45, color="crimson")
+
+
 def plot_time_series_cv_fold(
     ax,
     x: np.ndarray,
@@ -357,14 +384,60 @@ def plot_time_series_cv_fold(
     test_idx: np.ndarray,
     y_pred: Optional[np.ndarray] = None,
     title: str = "",
+    *,
+    twin_pred: bool = True,
 ) -> None:
+    """Sol eksen: gerçek getiri; sağ eksen (isteğe bağlı): test tahminleri (ayrı ölçek, zoom)."""
+    ax.axhline(0, color="k", lw=0.6, alpha=0.35)
     ax.plot(x, y, color="grey", alpha=0.35, label="Tüm veri")
-    ax.scatter(x[train_idx], y[train_idx], color="blue", label="Eğitim", s=18)
-    ax.scatter(x[test_idx], y[test_idx], color="green", label="Test", s=22)
+    ax.scatter(x[train_idx], y[train_idx], color="blue", label="Eğitim", s=28, linewidths=0)
+    ax.scatter(x[test_idx], y[test_idx], color="green", label="Test (gerçek)", s=34, linewidths=0)
+    ax.set_ylabel("Gerçek getiri")
+    handles, labels = ax.get_legend_handles_labels()
+
     if y_pred is not None:
-        ax.plot(x[test_idx], y_pred, color="red", linestyle="--", label="Tahmin (test)")
+        y_pred = np.asarray(y_pred, dtype=float)
+        if twin_pred:
+            ax2 = ax.twinx()
+            xt = x[test_idx]
+            ax2.plot(
+                xt,
+                y_pred,
+                color="crimson",
+                linestyle="-",
+                linewidth=2.5,
+                alpha=0.85,
+                zorder=3,
+            )
+            ax2.scatter(
+                xt,
+                y_pred,
+                color="red",
+                edgecolors="darkred",
+                linewidths=0.8,
+                s=72,
+                zorder=4,
+                label="Tahmin (test)",
+            )
+            _focus_pred_axis(ax2, y_pred)
+            ax2.set_ylabel("Tahmin (zoom)", color="crimson", fontsize=11)
+            ax2.tick_params(axis="y", labelcolor="crimson", labelsize=10, width=1.1)
+            h2, l2 = ax2.get_legend_handles_labels()
+            handles, labels = handles + h2, labels + l2
+        else:
+            ax.plot(
+                x[test_idx],
+                y_pred,
+                color="red",
+                linestyle="--",
+                linewidth=2.0,
+                label="Tahmin (test)",
+            )
+            handles, labels = ax.get_legend_handles_labels()
+
     ax.set_title(title)
-    ax.legend(loc="best", fontsize=8)
+    if handles:
+        ax.legend(handles, labels, loc="best", fontsize=8)
 
 
 def plot_all_cv_folds(
@@ -374,7 +447,8 @@ def plot_all_cv_folds(
     cv: TimeSeriesBlockCV,
     *,
     x_series: Optional[np.ndarray] = None,
-    figsize: Tuple[int, int] = (12, 10),
+    figsize: Tuple[int, int] = (16, 11),
+    dpi: int = 200,
 ) -> None:
     """Article-style grid: one subplot per fold."""
     n = len(y)
@@ -386,7 +460,12 @@ def plot_all_cv_folds(
         x_series = np.arange(n, dtype=float)
     else:
         x_series = np.asarray(x_series, dtype=float)
-    fig, axes = plt.subplots(len(splits), 1, figsize=(figsize[0], max(2, 2 * len(splits))))
+    fig, axes = plt.subplots(
+        len(splits),
+        1,
+        figsize=(figsize[0], max(3.4, 3.1 * len(splits))),
+        dpi=dpi,
+    )
     if len(splits) == 1:
         axes = [axes]
     est = clone(model)
