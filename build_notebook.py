@@ -1488,6 +1488,21 @@ def main():
                     return np.nan
                 return float(np.sqrt(np.mean((a[m] - b[m]) ** 2)))
 
+            def _add_errors(block, y, yhat, prefix):
+                y = np.asarray(y, dtype=float)
+                yhat = np.asarray(yhat, dtype=float)
+                err = y - yhat
+                block[f"err_{prefix}"] = err
+                block[f"abs_err_{prefix}"] = np.abs(err)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    block[f"pct_err_{prefix}"] = np.where(
+                        np.abs(y) > 1e-8, np.abs(err) / np.abs(y) * 100.0, np.nan
+                    )
+                ok = np.isfinite(y) & np.isfinite(yhat)
+                block[f"yön_doğru_{prefix}"] = np.where(
+                    ok, (np.sign(y) == np.sign(yhat)).astype(float), np.nan
+                )
+
 
             pred_parts = []
             for tgt, d in per_target.items():
@@ -1516,6 +1531,11 @@ def main():
                 block["pred_fs"] = d["best_fs"]
                 block["pred_linear_reg"] = d["best_reg"]
                 block["linear_residual"] = y - yhat_lin
+
+                _add_errors(block, y, yhat_lin, "linear")
+                _add_errors(block, y, yhat_xgb, "xgb")
+                _add_errors(block, y, yhat_lgb, "lgbm")
+
                 pred_parts.append(block)
 
             predictions_all = pd.concat(pred_parts, ignore_index=True)
@@ -1533,8 +1553,8 @@ def main():
                 )
             pred_rmse_by_ticker = pd.DataFrame(rmse_rows)
             print("predictions_all:", predictions_all.shape)
-            display(predictions_all.head(25))
-            display(pred_rmse_by_ticker.sort_values("rmse_linear").head(25))
+            display(predictions_all.tail(25))
+            display(pred_rmse_by_ticker.sort_values("rmse_linear").tail(25))
 
             if viz_target in per_target:
                 Xh, yh, _ = prepare_xy(events, viz_target, feats)
