@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "jupyter": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:4040/mcp",
+        "--header",
+        "Authorization:${MCP_AUTH_HEADER}"
+      ],
+      "env": {
+        "MCP_AUTH_HEADER": "Bearer odev-mcp-2026"
+      }
+    }
+  }
+}
